@@ -78,9 +78,22 @@ func corsMiddleware(allowOrigins []string, next http.Handler) http.Handler {
 // *http.MaxBytesError, which the JSON decoder maps to 413 payload_too_large.
 func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if carriesBody(r.Method) && r.ContentLength > maxBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, errorBody{
+				Code:    "payload_too_large",
+				Message: "request body is too large",
+			})
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// carriesBody limits the up-front 413 to the methods whose bodies the API
+// reads — the contract documents 413 only for those.
+func carriesBody(method string) bool {
+	return method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut
 }
 
 // jsonFallback keeps ServeMux's routing decisions but replaces its plain-text

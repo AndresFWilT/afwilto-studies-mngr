@@ -14,6 +14,9 @@ import (
 
 	"github.com/afwilto/studies-mngr/configs"
 	studieshttp "github.com/afwilto/studies-mngr/internal/studies/adapter/in/http"
+	"github.com/afwilto/studies-mngr/internal/studies/adapter/out/postgres"
+	"github.com/afwilto/studies-mngr/internal/studies/adapter/out/system"
+	"github.com/afwilto/studies-mngr/internal/studies/app/usecase"
 )
 
 // main is the composition root: the only place that knows concrete adapter types.
@@ -40,10 +43,20 @@ func main() {
 		}
 	}
 
+	clock := system.Clock{}
+	ids := system.UUIDv7Generator{}
+	categories := postgres.NewCategoryRepository(pool)
+
 	router := studieshttp.NewRouter(studieshttp.RouterDeps{
 		Pinger:       pool,
 		AllowOrigins: cfg.AllowOrigins,
 		MaxBodyBytes: cfg.MaxBodyBytes,
+
+		ListCategories: usecase.NewListCategoriesService(categories),
+		CreateCategory: usecase.NewCreateCategoryService(categories, clock, ids),
+		GetCategory:    usecase.NewGetCategoryService(categories),
+		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
+		DeleteCategory: usecase.NewDeleteCategoryService(categories, clock),
 	})
 
 	server := &http.Server{

@@ -26,6 +26,14 @@ func writeData(w http.ResponseWriter, status int, data any) {
 	}
 }
 
+func writeList(w http.ResponseWriter, status int, data any, meta any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]any{"data": data, "meta": meta}); err != nil {
+		slog.Error("encoding response", "err", err)
+	}
+}
+
 func writeError(w http.ResponseWriter, status int, body errorBody) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

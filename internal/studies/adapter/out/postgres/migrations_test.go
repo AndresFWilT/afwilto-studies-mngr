@@ -15,6 +15,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -35,6 +36,13 @@ func TestMain(m *testing.M) {
 		tcpostgres.WithPassword("studies"),
 		tcpostgres.BasicWaitStrategies(),
 		tcpostgres.WithSQLDriver("pgx"),
+		// An ICU default collation orders punctuation and control bytes
+		// differently from byte order, so ordering tests fail unless the
+		// queries pin COLLATE "C" themselves (production runs musl/alpine,
+		// whose default happens to match byte order and would hide that).
+		testcontainers.WithEnv(map[string]string{
+			"POSTGRES_INITDB_ARGS": "--locale-provider=icu --icu-locale=en-US",
+		}),
 	)
 	if err != nil {
 		panic(err)
