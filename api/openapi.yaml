@@ -1,0 +1,714 @@
+openapi: 3.1.0
+info:
+  title: AFWILTO Studies Manager
+  description: >
+    Personal knowledge base API: hierarchical categories, subjects, and
+    Markdown notes with kinds, tags and links to slab. Contract-first artifact
+    for frontend/docs/specs/16-studies.md — handlers are written to satisfy
+    this file and API tests assert conformance against it.
+
+
+    Deletion is always logical (Spec 16 FR-0): every DELETE endpoint marks the
+    row deleted; deleted rows 404 and vanish from lists, counts and views.
+
+
+    Unknown routes answer 404 not_found and a wrong method on a known route
+    answers 405 method_not_allowed (with an Allow header), both in the JSON
+    error envelope.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8084
+    description: Local Docker platform
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe (no DB access)
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe (DB ping)
+      responses:
+        '200':
+          description: Ready — database reachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        '503':
+          description: Not ready — database unreachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Categories (FR-1) ──────────────────────────────────────────────────────
+  /api/v1/categories:
+    get:
+      operationId: listCategories
+      summary: Alive categories as a flat list, ordered by path (case-insensitive)
+      responses:
+        '200':
+          description: Categories
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryListResponse' }
+    post:
+      operationId: createCategory
+      summary: Create a category (root when parentId is null or absent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCategoryRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/categories/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getCategory
+      summary: One alive category (404 once deleted)
+      responses:
+        '200':
+          description: Category
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateCategory
+      summary: Rename, recolor or move a category (parentId null moves it to the root)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCategoryRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      operationId: deleteCategory
+      summary: Logical delete; 409 in_use while alive children or subjects exist
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ── Note kinds (FR-7) ──────────────────────────────────────────────────────
+  /api/v1/note-kinds:
+    get:
+      operationId: listNoteKinds
+      summary: Alive note kinds ordered by name (case-insensitive)
+      responses:
+        '200':
+          description: Note kinds
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteKindListResponse' }
+    post:
+      operationId: createNoteKind
+      summary: Create a note kind
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteKindRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteKindResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/note-kinds/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getNoteKind
+      summary: One alive note kind (404 once deleted)
+      responses:
+        '200':
+          description: Note kind
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteKindResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateNoteKind
+      summary: Rename a note kind
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteKindRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteKindResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      operationId: deleteNoteKind
+      summary: Logical delete; 409 in_use while alive notes use the kind
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ── Subjects (FR-2) ────────────────────────────────────────────────────────
+  /api/v1/subjects:
+    get:
+      operationId: listSubjects
+      summary: Alive subjects ordered by name; categoryId filters to direct members
+      parameters:
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Subjects
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubjectListResponse' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    post:
+      operationId: createSubject
+      summary: Create a subject in any alive category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSubjectRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubjectResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/subjects/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getSubject
+      summary: Subject detail
+      responses:
+        '200':
+          description: Subject
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubjectResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateSubject
+      summary: Edit a subject or move it to another category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSubjectRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubjectResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      operationId: deleteSubject
+      summary: Logical delete; 409 in_use while alive notes exist
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ── Notes (FR-3, FR-5, FR-6) ───────────────────────────────────────────────
+  /api/v1/subjects/{id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listSubjectNotes
+      summary: Alive note summaries of a subject (no content)
+      parameters:
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+        - name: tag
+          in: query
+          description: Only notes carrying this (normalized) tag
+          schema: { type: string }
+      responses:
+        '200':
+          description: Note summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteSummaryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    post:
+      operationId: createNote
+      summary: Create a note in the subject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNoteRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/notes:
+    get:
+      operationId: listNotesByTag
+      summary: Alive notes carrying a tag, across all subjects (no content)
+      parameters:
+        - name: tag
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Note summaries, each with its subject and category
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteSummaryListResponse' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/notes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getNote
+      summary: Full note, including Markdown content
+      responses:
+        '200':
+          description: Note
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateNote
+      summary: Edit a note; version is required (409 stale_version on mismatch)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNoteRequest' }
+      responses:
+        '200':
+          description: Updated; version incremented by 1
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      operationId: deleteNote
+      summary: Logical delete
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Tags (FR-5) ────────────────────────────────────────────────────────────
+  /api/v1/tags:
+    get:
+      operationId: listTags
+      summary: Tags with at least one alive link to an alive note, ordered by name
+      responses:
+        '200':
+          description: Tags with counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagListResponse' }
+
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Sort:
+      name: sort
+      in: query
+      description: Ties break by title asc, then id asc
+      schema: { type: string, enum: [title, createdAt, updatedAt], default: title }
+    Order:
+      name: order
+      in: query
+      schema: { type: string, enum: [asc, desc], default: asc }
+
+  headers:
+    Location:
+      description: URL of the created resource
+      schema: { type: string }
+
+  responses:
+    NotFound:
+      description: Resource does not exist or is deleted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: >
+        Business conflict. details[0].rule is one of duplicate_name, in_use,
+        stale_version.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    PayloadTooLarge:
+      description: Request body exceeds MAX_BODY_BYTES (1 MiB by default)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationFailed:
+      description: >
+        Shape or business-rule violation. details[].rule includes not_found
+        (reference to a missing or deleted row), max_depth and cycle.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    # ── Shared ──
+    Uuid: { type: string, format: uuid }
+    HexColor:
+      type: string
+      pattern: '^#[0-9A-Fa-f]{6}$'
+    TagName:
+      type: string
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+      maxLength: 40
+    ListMeta:
+      type: object
+      required: [totalItems]
+      properties:
+        totalItems: { type: integer, minimum: 0 }
+
+    CategoryRef:
+      type: object
+      required: [id, name, color, path]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+        color: { $ref: '#/components/schemas/HexColor' }
+        path: { type: string, description: "Display path, e.g. 'TI / Cloud / AWS'" }
+    SubjectRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+    NoteKindRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+
+    # ── Categories ──
+    Category:
+      type: object
+      required: [id, parentId, name, color, path, depth, subjectCount]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        parentId: { type: [string, 'null'], format: uuid }
+        name: { type: string, minLength: 1, maxLength: 60 }
+        color:
+          type: string
+          pattern: '^#[0-9A-F]{6}$'
+          description: Stored and returned uppercase
+        path: { type: string }
+        depth: { type: integer, minimum: 1, maximum: 5 }
+        subjectCount:
+          type: integer
+          minimum: 0
+          description: Alive subjects directly in this category
+    CreateCategoryRequest:
+      type: object
+      required: [name, color]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        color: { $ref: '#/components/schemas/HexColor' }
+        parentId: { type: [string, 'null'], format: uuid }
+    UpdateCategoryRequest:
+      type: object
+      minProperties: 1
+      description: Absent ≠ null — parentId null moves the category to the root
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+        color: { $ref: '#/components/schemas/HexColor' }
+        parentId: { type: [string, 'null'], format: uuid }
+    CategoryResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Category' }
+    CategoryListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Note kinds ──
+    NoteKind:
+      type: object
+      required: [id, name, noteCount]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 40 }
+        noteCount: { type: integer, minimum: 0 }
+    NoteKindRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 40 }
+    NoteKindResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/NoteKind' }
+    NoteKindListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/NoteKind' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Subjects ──
+    Subject:
+      type: object
+      required: [id, categoryId, category, name, description, noteCount, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        categoryId: { $ref: '#/components/schemas/Uuid' }
+        category: { $ref: '#/components/schemas/CategoryRef' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+        noteCount: { type: integer, minimum: 0, description: Alive notes only }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateSubjectRequest:
+      type: object
+      required: [categoryId, name]
+      properties:
+        categoryId: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+    UpdateSubjectRequest:
+      type: object
+      minProperties: 1
+      properties:
+        categoryId: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+    SubjectResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Subject' }
+    SubjectListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Subject' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Notes ──
+    SlabLink:
+      type: object
+      required: [label, path]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 80 }
+        path:
+          type: string
+          pattern: '^/slab(/[a-z0-9-]+)+$'
+          example: /slab/ud/operative-systems/round-robin
+    NoteSummary:
+      type: object
+      required: [id, subjectId, title, kind, tags, createdAt, updatedAt, version]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        subjectId: { $ref: '#/components/schemas/Uuid' }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        kind: { $ref: '#/components/schemas/NoteKindRef' }
+        tags:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/TagName' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        subject:
+          $ref: '#/components/schemas/SubjectRef'
+          description: Present only on GET /api/v1/notes?tag=
+        category:
+          $ref: '#/components/schemas/CategoryRef'
+          description: Present only on GET /api/v1/notes?tag=
+    Note:
+      allOf:
+        - $ref: '#/components/schemas/NoteSummary'
+        - type: object
+          required: [content, slabLinks]
+          properties:
+            content: { type: string, maxLength: 200000, description: Markdown }
+            slabLinks:
+              type: array
+              maxItems: 10
+              items: { $ref: '#/components/schemas/SlabLink' }
+    CreateNoteRequest:
+      type: object
+      required: [title, kindId]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        kindId: { $ref: '#/components/schemas/Uuid' }
+        content: { type: string, maxLength: 200000 }
+        tags:
+          type: array
+          description: >
+            Raw tags; normalized server-side (trim, lowercase, whitespace → '-')
+            and deduplicated before validation, so the 10-tag limit applies to
+            the normalized set.
+          items: { type: string }
+        slabLinks:
+          type: array
+          items: { $ref: '#/components/schemas/SlabLink' }
+    UpdateNoteRequest:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1, description: The version the client read }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        kindId: { $ref: '#/components/schemas/Uuid' }
+        subjectId: { $ref: '#/components/schemas/Uuid' }
+        content: { type: string, maxLength: 200000 }
+        tags:
+          type: array
+          description: Replaces the whole tag set (same normalization as on create)
+          items: { type: string }
+        slabLinks:
+          type: array
+          description: Replaces the whole link list
+          items: { $ref: '#/components/schemas/SlabLink' }
+    NoteResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Note' }
+    NoteSummaryListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/NoteSummary' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Tags ──
+    Tag:
+      type: object
+      required: [name, count]
+      properties:
+        name: { $ref: '#/components/schemas/TagName' }
+        count: { type: integer, minimum: 1 }
+    TagListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Tag' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Health & errors ──
+    HealthResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [ok] }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [validation_failed, not_found, method_not_allowed, conflict, payload_too_large, internal]
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, rule, message]
+                properties:
+                  field: { type: string }
+                  rule: { type: string }
+                  message: { type: string }
