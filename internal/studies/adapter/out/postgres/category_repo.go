@@ -43,7 +43,7 @@ func categoryWriteError(err error) error {
 	case "category_max_depth":
 		return domain.SingleViolation("parentId", "max_depth", "the category tree is limited to 5 levels")
 	case "category_in_use":
-		return domain.NewConflict("id", domain.RuleInUse, "category has subcategories; move or delete them first")
+		return domain.NewConflict("id", domain.RuleInUse, "category still has subcategories or subjects; move or delete them first")
 	}
 	return err
 }
@@ -109,7 +109,7 @@ const aliveTree = `
 		WHERE c.deleted_at IS NULL AND t.depth < ` + recursionGuardSQL + `
 	)
 	SELECT id, parent_id, name, color, created_at, updated_at, path, depth,
-	       0 AS subject_count -- subjects arrive in Slice 04
+	       (SELECT count(*) FROM subjects s WHERE s.category_id = tree.id AND s.deleted_at IS NULL)::int AS subject_count
 	FROM tree`
 
 func scanView(row pgx.Row) (domain.CategoryView, error) {

@@ -148,16 +148,17 @@ func (s *updateCategoryService) Execute(ctx context.Context, id string, cmd in.U
 // ── Delete ──────────────────────────────────────────────────────────────────
 
 type deleteCategoryService struct {
-	repo  out.CategoryRepository
-	clock out.Clock
+	repo     out.CategoryRepository
+	subjects out.SubjectRepository
+	clock    out.Clock
 }
 
-func NewDeleteCategoryService(repo out.CategoryRepository, clock out.Clock) in.DeleteCategory {
-	return &deleteCategoryService{repo: repo, clock: clock}
+func NewDeleteCategoryService(repo out.CategoryRepository, subjects out.SubjectRepository, clock out.Clock) in.DeleteCategory {
+	return &deleteCategoryService{repo: repo, subjects: subjects, clock: clock}
 }
 
-// Execute deletes logically. Alive subcategories block it (BR-DEL1); alive
-// subjects join that rule in Slice 04, when the subjects table exists.
+// Execute deletes logically. Alive subcategories or alive subjects block it
+// (BR-DEL1).
 func (s *deleteCategoryService) Execute(ctx context.Context, id string) error {
 	cat, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -170,6 +171,14 @@ func (s *deleteCategoryService) Execute(ctx context.Context, id string) error {
 	if children > 0 {
 		return domain.NewConflict("id", domain.RuleInUse,
 			fmt.Sprintf("category has %d subcategories; move or delete them first", children))
+	}
+	subjects, err := s.subjects.CountAliveInCategory(ctx, id)
+	if err != nil {
+		return err
+	}
+	if subjects > 0 {
+		return domain.NewConflict("id", domain.RuleInUse,
+			fmt.Sprintf("category has %d subjects; move or delete them first", subjects))
 	}
 	cat.Delete(s.clock.Now())
 	return s.repo.Update(ctx, cat)

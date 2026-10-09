@@ -66,6 +66,8 @@ func canonCategory(cat domain.Category) (domain.Category, error) {
 // FakeCategoryRepo implements out.CategoryRepository in memory.
 type FakeCategoryRepo struct {
 	Rows map[string]domain.Category
+	// Subjects, when linked by NewFakeSubjectRepo, feeds SubjectCount.
+	Subjects *FakeSubjectRepo
 }
 
 func NewFakeCategoryRepo() *FakeCategoryRepo {
@@ -159,10 +161,15 @@ func (r *FakeCategoryRepo) view(id string) (domain.CategoryView, []string, bool)
 		names[i] = c.Name.String()
 		keys[i] = c.Name.Key()
 	}
+	subjectCount := 0
+	if r.Subjects != nil {
+		subjectCount = r.Subjects.countAlive(id)
+	}
 	return domain.CategoryView{
-		Category: chain[len(chain)-1],
-		Path:     strings.Join(names, " / "),
-		Depth:    len(chain),
+		Category:     chain[len(chain)-1],
+		Path:         strings.Join(names, " / "),
+		Depth:        len(chain),
+		SubjectCount: subjectCount,
 	}, keys, true
 }
 
@@ -340,4 +347,141 @@ func (r *FakeNoteKindRepo) List(_ context.Context) ([]domain.NoteKindView, error
 		return strings.Compare(a.ID, b.ID)
 	})
 	return views, nil
+}
+
+// FakeSubjectRepo implements out.SubjectRepository in memory. It resolves
+// category references through the linked FakeCategoryRepo and mirrors the
+// database trigger that rejects a missing or deleted category.
+type FakeSubjectRepo struct {
+	Rows       map[string]domain.Subject
+	Categories *FakeCategoryRepo
+}
+
+func NewFakeSubjectRepo(categories *FakeCategoryRepo) *FakeSubjectRepo {
+	r := &FakeSubjectRepo{Rows: map[string]domain.Subject{}, Categories: categories}
+	categories.Subjects = r
+	return r
+}
+
+func (r *FakeSubjectRepo) countAlive(categoryID string) int {
+	n := 0
+	for _, s := range r.Rows {
+		if s.DeletedAt == nil && s.CategoryID == categoryID {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *FakeSubjectRepo) check(s domain.Subject) (domain.Subject, error) {
+	var err error
+	if s.ID, err = canon(s.ID); err != nil {
+		return s, err
+	}
+	if s.CategoryID, err = canon(s.CategoryID); err != nil {
+		return s, err
+	}
+	if s.DeletedAt != nil {
+		return s, nil
+	}
+	if _, _, ok := r.Categories.view(s.CategoryID); !ok {
+		return s, domain.SingleViolation("categoryId", "not_found", "category does not exist")
+	}
+	for id, other := range r.Rows {
+		if id != s.ID && other.DeletedAt == nil && other.CategoryID == s.CategoryID && other.Name.Key() == s.Name.Key() {
+			return s, domain.NewConflict("name", domain.RuleDuplicateName, "a subject with this name already exists in the category")
+		}
+	}
+	return s, nil
+}
+
+func (r *FakeSubjectRepo) Create(_ context.Context, s domain.Subject) error {
+	s, err := r.check(s)
+	if err != nil {
+		return err
+	}
+	r.Rows[s.ID] = s
+	return nil
+}
+
+func (r *FakeSubjectRepo) Update(_ context.Context, s domain.Subject) error {
+	id, err := canon(s.ID)
+	if err != nil {
+		return err
+	}
+	if current, ok := r.Rows[id]; !ok || current.DeletedAt != nil {
+		return domain.ErrNotFound
+	}
+	s, err = r.check(s)
+	if err != nil {
+		return err
+	}
+	r.Rows[s.ID] = s
+	return nil
+}
+
+func (r *FakeSubjectRepo) Get(_ context.Context, id string) (domain.Subject, error) {
+	id, err := canon(id)
+	if err != nil {
+		return domain.Subject{}, err
+	}
+	s, ok := r.Rows[id]
+	if !ok || s.DeletedAt != nil {
+		return domain.Subject{}, domain.ErrNotFound
+	}
+	return s, nil
+}
+
+func (r *FakeSubjectRepo) viewOf(s domain.Subject) (domain.SubjectView, bool) {
+	cv, _, ok := r.Categories.view(s.CategoryID)
+	if !ok {
+		return domain.SubjectView{}, false
+	}
+	return domain.SubjectView{
+		Subject:  s,
+		Category: domain.CategoryRef{ID: cv.ID, Name: cv.Name.String(), Color: cv.Color.String(), Path: cv.Path},
+	}, true // notes arrive in Slice 05: NoteCount stays 0
+}
+
+func (r *FakeSubjectRepo) GetView(ctx context.Context, id string) (domain.SubjectView, error) {
+	s, err := r.Get(ctx, id)
+	if err != nil {
+		return domain.SubjectView{}, err
+	}
+	v, ok := r.viewOf(s)
+	if !ok {
+		return domain.SubjectView{}, domain.ErrNotFound
+	}
+	return v, nil
+}
+
+func (r *FakeSubjectRepo) List(_ context.Context, categoryID *string) ([]domain.SubjectView, error) {
+	filter, err := canonPtr(categoryID)
+	if err != nil {
+		return nil, err
+	}
+	views := []domain.SubjectView{}
+	for _, s := range r.Rows {
+		if s.DeletedAt != nil || (filter != nil && s.CategoryID != *filter) {
+			continue
+		}
+		if v, ok := r.viewOf(s); ok {
+			views = append(views, v)
+		}
+	}
+	slices.SortFunc(views, func(a, b domain.SubjectView) int {
+		if c := strings.Compare(a.Name.Key(), b.Name.Key()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return views, nil
+}
+
+func (r *FakeSubjectRepo) CountAliveInCategory(_ context.Context, categoryID string) (int, error) {
+	id, err := canon(categoryID)
+	if err != nil {
+		return 0, err
+	}
+	return r.countAlive(id), nil
 }

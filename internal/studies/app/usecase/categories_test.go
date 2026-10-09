@@ -12,6 +12,7 @@ import (
 
 type catEnv struct {
 	repo   *testsupport.FakeCategoryRepo
+	subs   *testsupport.FakeSubjectRepo
 	create in.CreateCategory
 	get    in.GetCategory
 	list   in.ListCategories
@@ -21,15 +22,17 @@ type catEnv struct {
 
 func newCatEnv() catEnv {
 	repo := testsupport.NewFakeCategoryRepo()
+	subs := testsupport.NewFakeSubjectRepo(repo)
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return catEnv{
 		repo:   repo,
+		subs:   subs,
 		create: NewCreateCategoryService(repo, clock, ids),
 		get:    NewGetCategoryService(repo),
 		list:   NewListCategoriesService(repo),
 		update: NewUpdateCategoryService(repo, clock),
-		delete: NewDeleteCategoryService(repo, clock),
+		delete: NewDeleteCategoryService(repo, subs, clock),
 	}
 }
 
@@ -355,5 +358,31 @@ func TestDeleteIsLogicalAndHidesTheCategory(t *testing.T) {
 
 	if _, err := e.create.Execute(ctx, in.CreateCategoryCommand{Name: "ti", Color: "#000000"}); err != nil {
 		t.Errorf("reusing a deleted name: err = %v, want nil", err)
+	}
+}
+
+func TestDeleteBlockedByAliveSubject(t *testing.T) {
+	e := newCatEnv()
+	cat, err := e.create.Execute(ctx, in.CreateCategoryCommand{Name: "TI", Color: "#22D3EE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, _ := domain.NewSubjectName("Networking")
+	subj := domain.NewSubject("0abcdef0-0000-7000-8000-000000000900", cat.ID, name, nil, testsupport.FixedNow)
+	if err := e.subs.Create(ctx, subj); err != nil {
+		t.Fatal(err)
+	}
+
+	wantKindConflict(t, e.delete.Execute(ctx, cat.ID), domain.RuleInUse)
+	if v, _ := e.get.Execute(ctx, cat.ID); v.SubjectCount != 1 {
+		t.Errorf("subjectCount = %d, want 1", v.SubjectCount)
+	}
+
+	subj.Delete(testsupport.FixedNow)
+	if err := e.subs.Update(ctx, subj); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.delete.Execute(ctx, cat.ID); err != nil {
+		t.Fatalf("delete after subject removed: %v", err)
 	}
 }
