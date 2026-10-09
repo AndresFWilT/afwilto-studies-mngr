@@ -46,6 +46,7 @@ func main() {
 	clock := system.Clock{}
 	ids := system.UUIDv7Generator{}
 	categories := postgres.NewCategoryRepository(pool)
+	noteKinds := postgres.NewNoteKindRepository(pool)
 
 	router := studieshttp.NewRouter(studieshttp.RouterDeps{
 		Pinger:       pool,
@@ -57,6 +58,12 @@ func main() {
 		GetCategory:    usecase.NewGetCategoryService(categories),
 		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
 		DeleteCategory: usecase.NewDeleteCategoryService(categories, clock),
+
+		ListNoteKinds:  usecase.NewListNoteKindsService(noteKinds),
+		CreateNoteKind: usecase.NewCreateNoteKindService(noteKinds, clock, ids),
+		GetNoteKind:    usecase.NewGetNoteKindService(noteKinds),
+		RenameNoteKind: usecase.NewRenameNoteKindService(noteKinds, clock),
+		DeleteNoteKind: usecase.NewDeleteNoteKindService(noteKinds, clock),
 	})
 
 	server := &http.Server{

@@ -252,3 +252,92 @@ func (r *FakeCategoryRepo) CountAliveChildren(_ context.Context, id string) (int
 	}
 	return n, nil
 }
+
+// FakeNoteKindRepo implements out.NoteKindRepository in memory.
+type FakeNoteKindRepo struct {
+	Rows map[string]domain.NoteKind
+}
+
+func NewFakeNoteKindRepo() *FakeNoteKindRepo {
+	return &FakeNoteKindRepo{Rows: map[string]domain.NoteKind{}}
+}
+
+func (r *FakeNoteKindRepo) nameClash(kind domain.NoteKind) bool {
+	for id, other := range r.Rows {
+		if id != kind.ID && other.DeletedAt == nil && kind.DeletedAt == nil &&
+			other.Name.Key() == kind.Name.Key() {
+			return true
+		}
+	}
+	return false
+}
+
+func kindDuplicateName() error {
+	return domain.NewConflict("name", domain.RuleDuplicateName, "a note kind with this name already exists")
+}
+
+func (r *FakeNoteKindRepo) Create(_ context.Context, kind domain.NoteKind) error {
+	id, err := canon(kind.ID)
+	if err != nil {
+		return err
+	}
+	kind.ID = id
+	if r.nameClash(kind) {
+		return kindDuplicateName()
+	}
+	r.Rows[kind.ID] = kind
+	return nil
+}
+
+func (r *FakeNoteKindRepo) Update(_ context.Context, kind domain.NoteKind) error {
+	id, err := canon(kind.ID)
+	if err != nil {
+		return err
+	}
+	kind.ID = id
+	current, ok := r.Rows[kind.ID]
+	if !ok || current.DeletedAt != nil {
+		return domain.ErrNotFound
+	}
+	if r.nameClash(kind) {
+		return kindDuplicateName()
+	}
+	r.Rows[kind.ID] = kind
+	return nil
+}
+
+func (r *FakeNoteKindRepo) Get(_ context.Context, id string) (domain.NoteKind, error) {
+	id, err := canon(id)
+	if err != nil {
+		return domain.NoteKind{}, err
+	}
+	kind, ok := r.Rows[id]
+	if !ok || kind.DeletedAt != nil {
+		return domain.NoteKind{}, domain.ErrNotFound
+	}
+	return kind, nil
+}
+
+func (r *FakeNoteKindRepo) GetView(ctx context.Context, id string) (domain.NoteKindView, error) {
+	kind, err := r.Get(ctx, id)
+	if err != nil {
+		return domain.NoteKindView{}, err
+	}
+	return domain.NoteKindView{NoteKind: kind}, nil // notes arrive in Slice 05
+}
+
+func (r *FakeNoteKindRepo) List(_ context.Context) ([]domain.NoteKindView, error) {
+	views := []domain.NoteKindView{}
+	for _, kind := range r.Rows {
+		if kind.DeletedAt == nil {
+			views = append(views, domain.NoteKindView{NoteKind: kind})
+		}
+	}
+	slices.SortFunc(views, func(a, b domain.NoteKindView) int {
+		if c := strings.Compare(a.Name.Key(), b.Name.Key()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return views, nil
+}

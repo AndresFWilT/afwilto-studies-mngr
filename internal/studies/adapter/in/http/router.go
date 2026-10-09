@@ -18,6 +18,12 @@ type RouterDeps struct {
 	GetCategory    in.GetCategory
 	UpdateCategory in.UpdateCategory
 	DeleteCategory in.DeleteCategory
+
+	ListNoteKinds  in.ListNoteKinds
+	CreateNoteKind in.CreateNoteKind
+	GetNoteKind    in.GetNoteKind
+	RenameNoteKind in.RenameNoteKind
+	DeleteNoteKind in.DeleteNoteKind
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -31,6 +37,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/categories/{id}", handleGetCategory(deps.GetCategory))
 	mux.HandleFunc("PATCH /api/v1/categories/{id}", handleUpdateCategory(deps.UpdateCategory))
 	mux.HandleFunc("DELETE /api/v1/categories/{id}", handleDeleteCategory(deps.DeleteCategory))
+
+	mux.HandleFunc("GET /api/v1/note-kinds", handleListNoteKinds(deps.ListNoteKinds))
+	mux.HandleFunc("POST /api/v1/note-kinds", handleCreateNoteKind(deps.CreateNoteKind))
+	mux.HandleFunc("GET /api/v1/note-kinds/{id}", handleGetNoteKind(deps.GetNoteKind))
+	mux.HandleFunc("PATCH /api/v1/note-kinds/{id}", handleRenameNoteKind(deps.RenameNoteKind))
+	mux.HandleFunc("DELETE /api/v1/note-kinds/{id}", handleDeleteNoteKind(deps.DeleteNoteKind))
 
 	var handler http.Handler = jsonFallback(mux)
 	if deps.MaxBodyBytes > 0 {

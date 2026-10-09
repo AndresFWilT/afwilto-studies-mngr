@@ -69,3 +69,19 @@ func toCategoryDTO(v domain.CategoryView) categoryDTO {
 		SubjectCount: v.SubjectCount,
 	}
 }
+
+// ── Note kinds ──────────────────────────────────────────────────────────────
+
+type noteKindRequest struct {
+	Name string `json:"name"`
+}
+
+type noteKindDTO struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	NoteCount int    `json:"noteCount"`
+}
+
+func toNoteKindDTO(v domain.NoteKindView) noteKindDTO {
+	return noteKindDTO{ID: v.ID, Name: v.Name.String(), NoteCount: v.NoteCount}
+}

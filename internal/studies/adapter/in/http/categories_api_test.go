@@ -20,6 +20,7 @@ type apiEnv struct {
 
 func newAPIEnv() apiEnv {
 	categories := testsupport.NewFakeCategoryRepo()
+	kinds := testsupport.NewFakeNoteKindRepo()
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return apiEnv{router: NewRouter(RouterDeps{
@@ -31,6 +32,12 @@ func newAPIEnv() apiEnv {
 		ListCategories: usecase.NewListCategoriesService(categories),
 		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
 		DeleteCategory: usecase.NewDeleteCategoryService(categories, clock),
+
+		ListNoteKinds:  usecase.NewListNoteKindsService(kinds),
+		CreateNoteKind: usecase.NewCreateNoteKindService(kinds, clock, ids),
+		GetNoteKind:    usecase.NewGetNoteKindService(kinds),
+		RenameNoteKind: usecase.NewRenameNoteKindService(kinds, clock),
+		DeleteNoteKind: usecase.NewDeleteNoteKindService(kinds, clock),
 	})}
 }
 
