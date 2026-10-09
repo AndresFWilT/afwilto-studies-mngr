@@ -9,14 +9,16 @@ import (
 // NoteRepository persists notes. Every read sees alive rows only; nothing is
 // ever hard-deleted (Spec 16 FR-0).
 type NoteRepository interface {
-	// Create inserts a note. A duplicate alive title in the subject is a
+	// Create inserts a note together with its tags and slab links. A duplicate alive title in the subject is a
 	// *domain.ConflictError (duplicate_name); a missing or deleted subject or
 	// kind is a subjectId / kindId not_found validation error.
 	Create(ctx context.Context, note domain.Note) error
 	// Update persists the editable fields of an alive note, but only when the
 	// stored version equals expectedVersion. domain.ErrNotFound when the row is
 	// not alive; a *domain.ConflictError (stale_version) when it is alive with
-	// another version. The note carries the already-incremented version.
+	// another version. The note carries the already-incremented version and its
+	// full tag set and slab links, which replace the stored ones; links of tags
+	// that left the set are unlinked logically (deleted_at), never removed.
 	Update(ctx context.Context, note domain.Note, expectedVersion int) error
 	// Delete stamps DeletedAt of an alive note without touching its version.
 	// domain.ErrNotFound when the row is not alive.
@@ -24,8 +26,12 @@ type NoteRepository interface {
 	Get(ctx context.Context, id string) (domain.Note, error)
 	GetView(ctx context.Context, id string) (domain.NoteView, error)
 	// ListBySubject returns summaries (empty Content) ordered by sort, ties by
-	// title ascending then id ascending.
-	ListBySubject(ctx context.Context, subjectID string, sort domain.SortSpec) ([]domain.NoteView, error)
+	// title ascending then id ascending. A non-nil tag (already normalized)
+	// keeps only the notes carrying it.
+	ListBySubject(ctx context.Context, subjectID string, tag *string, sort domain.SortSpec) ([]domain.NoteView, error)
+	// ListByTag returns summaries of every alive note carrying the (already
+	// normalized) tag, with Subject and Category set.
+	ListByTag(ctx context.Context, tag string, sort domain.SortSpec) ([]domain.NoteView, error)
 	CountAliveBySubject(ctx context.Context, subjectID string) (int, error)
 	CountAliveByKind(ctx context.Context, kindID string) (int, error)
 }

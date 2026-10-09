@@ -136,22 +136,35 @@ func toSubjectDTO(v domain.SubjectView) subjectDTO {
 
 // ── Notes ───────────────────────────────────────────────────────────────────
 
+type slabLinkDTO struct {
+	Label string `json:"label"`
+	Path  string `json:"path"`
+}
+
+func toLinkInputs(in []slabLinkDTO) []domain.SlabLinkInput {
+	out := make([]domain.SlabLinkInput, len(in))
+	for i, l := range in {
+		out[i] = domain.SlabLinkInput{Label: l.Label, Path: l.Path}
+	}
+	return out
+}
+
 type createNoteRequest struct {
-	Title     string            `json:"title"`
-	KindID    *string           `json:"kindId"`
-	Content   *string           `json:"content"`
-	Tags      []string          `json:"tags"`
-	SlabLinks []json.RawMessage `json:"slabLinks"`
+	Title     string        `json:"title"`
+	KindID    *string       `json:"kindId"`
+	Content   *string       `json:"content"`
+	Tags      []string      `json:"tags"`
+	SlabLinks []slabLinkDTO `json:"slabLinks"`
 }
 
 type updateNoteRequest struct {
-	Version   *int              `json:"version"`
-	Title     Opt[string]       `json:"title"`
-	KindID    Opt[string]       `json:"kindId"`
-	SubjectID Opt[string]       `json:"subjectId"`
-	Content   Opt[string]       `json:"content"`
-	Tags      []string          `json:"tags"`
-	SlabLinks []json.RawMessage `json:"slabLinks"`
+	Version   *int               `json:"version"`
+	Title     Opt[string]        `json:"title"`
+	KindID    Opt[string]        `json:"kindId"`
+	SubjectID Opt[string]        `json:"subjectId"`
+	Content   Opt[string]        `json:"content"`
+	Tags      Opt[[]string]      `json:"tags"`
+	SlabLinks Opt[[]slabLinkDTO] `json:"slabLinks"`
 }
 
 type noteKindRefDTO struct {
@@ -168,28 +181,47 @@ type noteSummaryDTO struct {
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	Version   int            `json:"version"`
+	// Present only on the cross-subject tag view.
+	Subject  *subjectRefDTO  `json:"subject,omitempty"`
+	Category *categoryRefDTO `json:"category,omitempty"`
 }
 
-// noteDTO is the full note; slabLinks arrive in Slice 06 and are always empty.
+type subjectRefDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type noteDTO struct {
 	noteSummaryDTO
-	Content   string `json:"content"`
-	SlabLinks []any  `json:"slabLinks"`
+	Content   string        `json:"content"`
+	SlabLinks []slabLinkDTO `json:"slabLinks"`
+}
+
+type tagDTO struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 func toNoteSummaryDTO(v domain.NoteView) noteSummaryDTO {
-	tags := v.Tags
-	if tags == nil {
-		tags = []string{}
-	}
-	return noteSummaryDTO{
+	dto := noteSummaryDTO{
 		ID: v.ID, SubjectID: v.SubjectID, Title: v.Title.String(),
 		Kind:      noteKindRefDTO{ID: v.Kind.ID, Name: v.Kind.Name},
-		Tags:      tags,
+		Tags:      v.Tags.Names(),
 		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, Version: v.Version,
 	}
+	if v.Subject != nil {
+		dto.Subject = &subjectRefDTO{ID: v.Subject.ID, Name: v.Subject.Name}
+	}
+	if v.Category != nil {
+		dto.Category = &categoryRefDTO{ID: v.Category.ID, Name: v.Category.Name, Color: v.Category.Color, Path: v.Category.Path}
+	}
+	return dto
 }
 
 func toNoteDTO(v domain.NoteView) noteDTO {
-	return noteDTO{noteSummaryDTO: toNoteSummaryDTO(v), Content: v.Content.String(), SlabLinks: []any{}}
+	links := make([]slabLinkDTO, len(v.SlabLinks))
+	for i, l := range v.SlabLinks {
+		links[i] = slabLinkDTO{Label: l.Label, Path: l.Path}
+	}
+	return noteDTO{noteSummaryDTO: toNoteSummaryDTO(v), Content: v.Content.String(), SlabLinks: links}
 }

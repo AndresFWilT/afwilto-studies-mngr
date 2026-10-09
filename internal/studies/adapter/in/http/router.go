@@ -19,6 +19,8 @@ type RouterDeps struct {
 	UpdateCategory in.UpdateCategory
 	DeleteCategory in.DeleteCategory
 
+	ListNotesByTag   in.ListNotesByTag
+	ListTags         in.ListTags
 	ListSubjectNotes in.ListSubjectNotes
 	CreateNote       in.CreateNote
 	GetNote          in.GetNote
@@ -64,6 +66,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	mux.HandleFunc("GET /api/v1/subjects/{id}/notes", handleListSubjectNotes(deps.ListSubjectNotes))
 	mux.HandleFunc("POST /api/v1/subjects/{id}/notes", handleCreateNote(deps.CreateNote))
+	mux.HandleFunc("GET /api/v1/notes", handleListNotesByTag(deps.ListNotesByTag))
+	mux.HandleFunc("GET /api/v1/tags", handleListTags(deps.ListTags))
 	mux.HandleFunc("GET /api/v1/notes/{id}", handleGetNote(deps.GetNote))
 	mux.HandleFunc("PATCH /api/v1/notes/{id}", handleUpdateNote(deps.UpdateNote))
 	mux.HandleFunc("DELETE /api/v1/notes/{id}", handleDeleteNote(deps.DeleteNote))

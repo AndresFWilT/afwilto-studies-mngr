@@ -7,22 +7,6 @@ import (
 	"github.com/afwilto/studies-mngr/internal/studies/domain"
 )
 
-// notImplemented rejects input that belongs to Slice 06 (tags, slab links)
-// instead of silently dropping it.
-func notImplemented(field string) error {
-	return domain.SingleViolation(field, "not_implemented", field+" are not supported yet")
-}
-
-func rejectSlice06Fields(tags []string, slabLinks []any) error {
-	if len(tags) > 0 {
-		return notImplemented("tags")
-	}
-	if len(slabLinks) > 0 {
-		return notImplemented("slabLinks")
-	}
-	return nil
-}
-
 func handleListSubjectNotes(list in.ListSubjectNotes) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := pathID(w, r)
@@ -30,16 +14,17 @@ func handleListSubjectNotes(list in.ListSubjectNotes) http.HandlerFunc {
 			return
 		}
 		q := r.URL.Query()
-		if q.Has("tag") {
-			translateError(w, domain.SingleViolation("tag", "not_implemented", "the tag filter is not supported yet"))
-			return
-		}
 		sort, err := domain.ParseSortSpec(q.Get("sort"), q.Get("order"))
 		if err != nil {
 			translateError(w, err)
 			return
 		}
-		views, err := list.Execute(r.Context(), id, sort)
+		var tag *string
+		if q.Has("tag") {
+			value := q.Get("tag")
+			tag = &value
+		}
+		views, err := list.Execute(r.Context(), id, tag, sort)
 		if err != nil {
 			translateError(w, err)
 			return
@@ -62,10 +47,6 @@ func handleCreateNote(create in.CreateNote) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if err := rejectSlice06Fields(req.Tags, rawToAny(req.SlabLinks)); err != nil {
-			translateError(w, err)
-			return
-		}
 		kindID, err := requiredUUIDField("kindId", req.KindID)
 		if err != nil {
 			translateError(w, err)
@@ -73,6 +54,7 @@ func handleCreateNote(create in.CreateNote) http.HandlerFunc {
 		}
 		view, err := create.Execute(r.Context(), in.CreateNoteCommand{
 			SubjectID: subjectID, Title: req.Title, KindID: kindID, Content: req.Content,
+			Tags: req.Tags, SlabLinks: toLinkInputs(req.SlabLinks),
 		})
 		if err != nil {
 			translateError(w, err)
@@ -116,10 +98,6 @@ func handleUpdateNote(update in.UpdateNote) http.HandlerFunc {
 			translateError(w, domain.SingleViolation("version", "min", "version must be at least 1"))
 			return
 		}
-		if err := rejectSlice06Fields(req.Tags, rawToAny(req.SlabLinks)); err != nil {
-			translateError(w, err)
-			return
-		}
 		var err error
 		if req.KindID.Value, err = uuidField("kindId", req.KindID.Value); err != nil {
 			translateError(w, err)
@@ -133,6 +111,7 @@ func handleUpdateNote(update in.UpdateNote) http.HandlerFunc {
 			Version: *req.Version,
 			Title:   req.Title.patch(), KindID: req.KindID.patch(),
 			SubjectID: req.SubjectID.patch(), Content: req.Content.patch(),
+			Tags: req.Tags.patch(), SlabLinks: slabLinksPatch(req.SlabLinks),
 		})
 		if err != nil {
 			translateError(w, err)
@@ -156,10 +135,47 @@ func handleDeleteNote(del in.DeleteNote) http.HandlerFunc {
 	}
 }
 
-func rawToAny[T any](in []T) []any {
-	out := make([]any, len(in))
-	for i, v := range in {
-		out[i] = v
+func slabLinksPatch(o Opt[[]slabLinkDTO]) in.Patch[[]domain.SlabLinkInput] {
+	p := in.Patch[[]domain.SlabLinkInput]{Set: o.Set}
+	if o.Value != nil {
+		inputs := toLinkInputs(*o.Value)
+		p.Value = &inputs
 	}
-	return out
+	return p
+}
+
+func handleListNotesByTag(list in.ListNotesByTag) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		sort, err := domain.ParseSortSpec(q.Get("sort"), q.Get("order"))
+		if err != nil {
+			translateError(w, err)
+			return
+		}
+		views, err := list.Execute(r.Context(), q.Get("tag"), sort)
+		if err != nil {
+			translateError(w, err)
+			return
+		}
+		dtos := make([]noteSummaryDTO, len(views))
+		for i, v := range views {
+			dtos[i] = toNoteSummaryDTO(v)
+		}
+		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+	}
+}
+
+func handleListTags(list in.ListTags) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		counts, err := list.Execute(r.Context())
+		if err != nil {
+			translateError(w, err)
+			return
+		}
+		dtos := make([]tagDTO, len(counts))
+		for i, c := range counts {
+			dtos[i] = tagDTO{Name: c.Name, Count: c.Count}
+		}
+		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+	}
 }

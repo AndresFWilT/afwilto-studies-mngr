@@ -27,6 +27,7 @@ func newNoteRepoEnv(t *testing.T) *noteRepoEnv {
 	t.Helper()
 	subj := newSubjRepoEnv(t) // truncates categories CASCADE (subjects, notes)
 	exec(t, `TRUNCATE note_kinds CASCADE`)
+	exec(t, `TRUNCATE tags CASCADE`)
 	cat := subj.cats.add(t, "TI", nil)
 	e := &noteRepoEnv{
 		subj: subj, kinds: NewNoteKindRepository(pool), repo: NewNoteRepository(pool),
@@ -165,7 +166,7 @@ func TestNoteRepoListSorting(t *testing.T) { // AC-B16
 	}
 	for _, tc := range tests {
 		spec, _ := domain.ParseSortSpec(tc.sort, tc.order)
-		list, err := e.repo.ListBySubject(ctx, e.subject.ID, spec)
+		list, err := e.repo.ListBySubject(ctx, e.subject.ID, nil, spec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +194,7 @@ func TestNoteRepoTiesBreakByTitleThenID(t *testing.T) {
 		}
 	}
 	spec, _ := domain.ParseSortSpec("createdAt", "desc")
-	list, _ := e.repo.ListBySubject(ctx, e.subject.ID, spec)
+	list, _ := e.repo.ListBySubject(ctx, e.subject.ID, nil, spec)
 	if list[0].Title.String() != "a" || list[1].Title.String() != "b" {
 		t.Fatalf("tie order = %s, %s; want a, b", list[0].Title.String(), list[1].Title.String())
 	}

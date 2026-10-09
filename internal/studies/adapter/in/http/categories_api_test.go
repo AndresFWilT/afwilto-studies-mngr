@@ -23,6 +23,7 @@ func newAPIEnv() apiEnv {
 	kinds := testsupport.NewFakeNoteKindRepo()
 	subjects := testsupport.NewFakeSubjectRepo(categories)
 	notes := testsupport.NewFakeNoteRepo(subjects, kinds)
+	tags := testsupport.FakeTagQuery{Notes: notes}
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return apiEnv{router: NewRouter(RouterDeps{
@@ -35,6 +36,8 @@ func newAPIEnv() apiEnv {
 		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
 		DeleteCategory: usecase.NewDeleteCategoryService(categories, subjects, clock),
 
+		ListNotesByTag:   usecase.NewListNotesByTagService(notes),
+		ListTags:         usecase.NewListTagsService(tags),
 		ListSubjectNotes: usecase.NewListSubjectNotesService(notes, subjects),
 		CreateNote:       usecase.NewCreateNoteService(notes, subjects, kinds, clock, ids),
 		GetNote:          usecase.NewGetNoteService(notes),

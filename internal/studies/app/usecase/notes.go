@@ -52,6 +52,14 @@ func (s *createNoteService) Execute(ctx context.Context, cmd in.CreateNoteComman
 	if err != nil {
 		return domain.NoteView{}, err
 	}
+	tags, err := domain.NewTagSet(cmd.Tags)
+	if err != nil {
+		return domain.NoteView{}, err
+	}
+	links, err := domain.NewSlabLinks(cmd.SlabLinks)
+	if err != nil {
+		return domain.NoteView{}, err
+	}
 	// The subject is the resource the request addresses: unknown means 404.
 	if _, err := s.subjects.Get(ctx, cmd.SubjectID); err != nil {
 		return domain.NoteView{}, err
@@ -60,6 +68,7 @@ func (s *createNoteService) Execute(ctx context.Context, cmd in.CreateNoteComman
 		return domain.NoteView{}, err
 	}
 	note := domain.NewNote(s.ids.NewID(), cmd.SubjectID, cmd.KindID, title, content, s.clock.Now())
+	note.Tags, note.SlabLinks = tags, links
 	if err := s.repo.Create(ctx, note); err != nil {
 		return domain.NoteView{}, err
 	}
@@ -85,11 +94,41 @@ func NewListSubjectNotesService(repo out.NoteRepository, subjects out.SubjectRep
 	return &listSubjectNotesService{repo: repo, subjects: subjects}
 }
 
-func (s *listSubjectNotesService) Execute(ctx context.Context, subjectID string, sort domain.SortSpec) ([]domain.NoteView, error) {
+func (s *listSubjectNotesService) Execute(ctx context.Context, subjectID string, tag *string, sort domain.SortSpec) ([]domain.NoteView, error) {
+	var normalized *string
+	if tag != nil {
+		t, err := domain.NewTag(*tag)
+		if err != nil {
+			return nil, err
+		}
+		normalized = &t
+	}
 	if _, err := s.subjects.Get(ctx, subjectID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListBySubject(ctx, subjectID, sort)
+	return s.repo.ListBySubject(ctx, subjectID, normalized, sort)
+}
+
+type listNotesByTagService struct{ repo out.NoteRepository }
+
+func NewListNotesByTagService(repo out.NoteRepository) in.ListNotesByTag {
+	return &listNotesByTagService{repo: repo}
+}
+
+func (s *listNotesByTagService) Execute(ctx context.Context, tag string, sort domain.SortSpec) ([]domain.NoteView, error) {
+	normalized, err := domain.NewTag(tag)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListByTag(ctx, normalized, sort)
+}
+
+type listTagsService struct{ query out.TagQuery }
+
+func NewListTagsService(query out.TagQuery) in.ListTags { return &listTagsService{query: query} }
+
+func (s *listTagsService) Execute(ctx context.Context) ([]domain.TagCount, error) {
+	return s.query.List(ctx)
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
@@ -113,8 +152,8 @@ func (s *updateNoteService) Execute(ctx context.Context, id string, cmd in.Updat
 	if cmd.Version < 1 {
 		return domain.NoteView{}, domain.SingleViolation("version", "required", "version must be the integer version the client read (>= 1)")
 	}
-	if !cmd.Title.Set && !cmd.KindID.Set && !cmd.SubjectID.Set && !cmd.Content.Set {
-		return domain.NoteView{}, domain.SingleViolation("body", "required", "at least one of title, kindId, subjectId or content must be provided")
+	if !cmd.Title.Set && !cmd.KindID.Set && !cmd.SubjectID.Set && !cmd.Content.Set && !cmd.Tags.Set && !cmd.SlabLinks.Set {
+		return domain.NoteView{}, domain.SingleViolation("body", "required", "at least one of title, kindId, subjectId, content, tags or slabLinks must be provided")
 	}
 	note, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -137,6 +176,22 @@ func (s *updateNoteService) Execute(ctx context.Context, id string, cmd in.Updat
 			return domain.NoteView{}, requiredNull("content")
 		}
 		if note.Content, err = domain.NewMarkdownContent(*cmd.Content.Value); err != nil {
+			return domain.NoteView{}, err
+		}
+	}
+	if cmd.Tags.Set {
+		if cmd.Tags.Value == nil {
+			return domain.NoteView{}, requiredNull("tags")
+		}
+		if note.Tags, err = domain.NewTagSet(*cmd.Tags.Value); err != nil {
+			return domain.NoteView{}, err
+		}
+	}
+	if cmd.SlabLinks.Set {
+		if cmd.SlabLinks.Value == nil {
+			return domain.NoteView{}, requiredNull("slabLinks")
+		}
+		if note.SlabLinks, err = domain.NewSlabLinks(*cmd.SlabLinks.Value); err != nil {
 			return domain.NoteView{}, err
 		}
 	}

@@ -100,6 +100,8 @@ type Note struct {
 	KindID    string
 	Title     NoteTitle
 	Content   MarkdownContent
+	Tags      TagSet
+	SlabLinks []SlabLink
 	Version   int
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -129,10 +131,23 @@ type NoteKindRef struct {
 	Name string
 }
 
-// NoteView is the read model. Content is empty in list results. Tags arrive
-// in Slice 06.
+// SubjectRef is the slice of a subject a tag view exposes.
+type SubjectRef struct {
+	ID   string
+	Name string
+}
+
+// NoteView is the read model. Content and SlabLinks are empty in list
+// results. Subject and Category are set only on the cross-subject tag view.
 type NoteView struct {
 	Note
-	Kind NoteKindRef
-	Tags []string
+	Kind     NoteKindRef
+	Subject  *SubjectRef
+	Category *CategoryRef
+}
+
+// TagCount is a tag with the number of alive notes carrying it.
+type TagCount struct {
+	Name  string
+	Count int
 }

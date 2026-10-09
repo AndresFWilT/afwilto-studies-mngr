@@ -90,8 +90,12 @@ func TestCreateNoteErrorsAPI(t *testing.T) {
 		{"unknown kind", f.listPath, `{"title":"T","kindId":"` + unknownID + `"}`, 422, "validation_failed", "kindId", "not_found"},
 		{"unknown subject", subjectsPath + "/" + unknownID + "/notes", f.body("T", ""), 404, "not_found", "", ""},
 		{"malformed subject id", subjectsPath + "/nope/notes", f.body("T", ""), 404, "not_found", "", ""},
-		{"tags not implemented", f.listPath, f.body("T", `"tags":["a"]`), 422, "validation_failed", "tags", "not_implemented"},
-		{"slabLinks not implemented", f.listPath, f.body("T", `"slabLinks":[{"label":"l","path":"/slab/a"}]`), 422, "validation_failed", "slabLinks", "not_implemented"},
+		{"invalid tag", f.listPath, f.body("T", `"tags":["ok","bad_tag!"]`), 422, "validation_failed", "tags[1]", "format"},
+		{"too many tags", f.listPath, f.body("T", `"tags":["a","b","c","d","e","f","g","h","i","j","k"]`), 422, "validation_failed", "tags", "max_items"},
+		{"bad slab path", f.listPath, f.body("T", `"slabLinks":[{"label":"l","path":"/finance"}]`), 422, "validation_failed", "slabLinks[0].path", "format"},
+		{"external slab path", f.listPath, f.body("T", `"slabLinks":[{"label":"l","path":"https://x.com/slab/a"}]`), 422, "validation_failed", "slabLinks[0].path", "format"},
+		{"empty slab label", f.listPath, f.body("T", `"slabLinks":[{"label":" ","path":"/slab/a"}]`), 422, "validation_failed", "slabLinks[0].label", "required"},
+		{"slabLinks not an array of objects", f.listPath, f.body("T", `"slabLinks":["x"]`), 422, "validation_failed", "body", "json"},
 		{"invalid json", f.listPath, `{"title":`, 422, "validation_failed", "body", "json"},
 		{"body over limit", f.listPath, f.body("T", `"content":"`+big+`"`), 413, "payload_too_large", "", ""},
 	}
@@ -143,7 +147,7 @@ func TestListNotesSortingAPI(t *testing.T) { // S05-2, AC-B16
 	}
 	wantError(t, f.do(t, http.MethodGet, f.listPath+"?sort=size", ""), 422, "validation_failed", "sort", "enum")
 	wantError(t, f.do(t, http.MethodGet, f.listPath+"?order=bogus", ""), 422, "validation_failed", "order", "enum")
-	wantError(t, f.do(t, http.MethodGet, f.listPath+"?tag=iam", ""), 422, "validation_failed", "tag", "not_implemented")
+	wantError(t, f.do(t, http.MethodGet, f.listPath+"?tag=bad_tag!", ""), 422, "validation_failed", "tag", "format")
 	wantError(t, f.do(t, http.MethodGet, subjectsPath+"/"+unknownID+"/notes", ""), 404, "not_found", "", "")
 }
 
@@ -167,7 +171,9 @@ func TestUpdateNoteVersionGuardAPI(t *testing.T) { // S05-3, S05-10, AC-B17
 	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"kindId":"`+unknownID+`"}`), 422, "validation_failed", "kindId", "not_found")
 	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"subjectId":"`+unknownID+`"}`), 422, "validation_failed", "subjectId", "not_found")
 	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"subjectId":"zz"}`), 422, "validation_failed", "subjectId", "format")
-	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"tags":["a"]}`), 422, "validation_failed", "tags", "not_implemented")
+	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"tags":null}`), 422, "validation_failed", "tags", "required")
+	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"slabLinks":null}`), 422, "validation_failed", "slabLinks", "required")
+	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"tags":["bad_tag!"]}`), 422, "validation_failed", "tags[0]", "format")
 	wantError(t, f.do(t, http.MethodPatch, path, `{"version":"2","content":"x"}`), 422, "validation_failed", "body", "json")
 	wantError(t, f.do(t, http.MethodPatch, notesPath+"/"+unknownID, `{"version":1,"content":"x"}`), 404, "not_found", "", "")
 }
@@ -233,4 +239,44 @@ func TestDeleteNoteAndBlockedParentsAPI(t *testing.T) { // S05-5, S05-8, S05-9
 		t.Errorf("kind delete after notes removed: %d %s", rec.Code, rec.Body.String())
 	}
 	wantError(t, f.do(t, http.MethodPost, f.listPath, f.body("T", "")), 422, "validation_failed", "kindId", "not_found")
+}
+
+func TestTagsAndSlabLinksAPI(t *testing.T) { // S06-1, S06-4, S06-5, S06-9
+	f := newNoteFixture(t)
+	body := f.body("IAM", `"tags":[" Cloud Security ","cloud-security","IAM"],"slabLinks":[{"label":" B-Tree lab ","path":"/slab/ud/operative-systems"}]`)
+	rec := f.do(t, http.MethodPost, f.listPath, body)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	data := decodeData(t, rec)
+	tags := data["tags"].([]any)
+	links := data["slabLinks"].([]any)
+	if len(tags) != 2 || tags[0] != "cloud-security" || tags[1] != "iam" {
+		t.Errorf("tags = %v", tags)
+	}
+	if l := links[0].(map[string]any); len(links) != 1 || l["label"] != "B-Tree lab" || l["path"] != "/slab/ud/operative-systems" {
+		t.Errorf("slabLinks = %v", links)
+	}
+	path := notesPath + "/" + data["id"].(string)
+
+	// tags-only edit bumps the version and keeps the links
+	rec = f.do(t, http.MethodPatch, path, `{"version":1,"tags":["s3"]}`)
+	got := decodeData(t, rec)
+	if rec.Code != 200 || got["version"] != float64(2) || len(got["slabLinks"].([]any)) != 1 || got["tags"].([]any)[0] != "s3" {
+		t.Fatalf("tags-only edit: %d %s", rec.Code, rec.Body.String())
+	}
+	// list summaries carry tags but never slabLinks or content
+	for _, item := range decodeList(t, f.do(t, http.MethodGet, f.listPath, "")) {
+		if _, has := item["slabLinks"]; has {
+			t.Errorf("summary has slabLinks: %v", item)
+		}
+		if item["tags"].([]any)[0] != "s3" {
+			t.Errorf("summary tags = %v", item["tags"])
+		}
+	}
+	// eleven distinct tags / links
+	eleven := `"a","b","c","d","e","f","g","h","i","j","k"`
+	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"tags":[`+eleven+`]}`), 422, "validation_failed", "tags", "max_items")
+	links11 := strings.TrimSuffix(strings.Repeat(`{"label":"l","path":"/slab/a"},`, 11), ",")
+	wantError(t, f.do(t, http.MethodPatch, path, `{"version":2,"slabLinks":[`+links11+`]}`), 422, "validation_failed", "slabLinks", "max_items")
 }

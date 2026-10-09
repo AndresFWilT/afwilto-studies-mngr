@@ -622,12 +622,12 @@ func (r *FakeNoteRepo) Get(_ context.Context, id string) (domain.Note, error) {
 func (r *FakeNoteRepo) viewOf(note domain.Note, withContent bool) domain.NoteView {
 	if !withContent {
 		note.Content = domain.MarkdownContent{}
+		note.SlabLinks = nil
 	}
 	kind := r.Kinds.Rows[note.KindID]
 	return domain.NoteView{
 		Note: note,
 		Kind: domain.NoteKindRef{ID: kind.ID, Name: kind.Name.String()},
-		Tags: []string{},
 	}
 }
 
@@ -639,16 +639,38 @@ func (r *FakeNoteRepo) GetView(ctx context.Context, id string) (domain.NoteView,
 	return r.viewOf(note, true), nil
 }
 
-func (r *FakeNoteRepo) ListBySubject(_ context.Context, subjectID string, sort domain.SortSpec) ([]domain.NoteView, error) {
+func (r *FakeNoteRepo) ListBySubject(_ context.Context, subjectID string, tag *string, sort domain.SortSpec) ([]domain.NoteView, error) {
 	subjectID, err := canon(subjectID)
 	if err != nil {
 		return nil, err
 	}
+	return r.collect(func(n domain.Note) bool {
+		return n.SubjectID == subjectID && (tag == nil || hasTag(n, *tag))
+	}, sort, false), nil
+}
+
+func (r *FakeNoteRepo) ListByTag(_ context.Context, tag string, sort domain.SortSpec) ([]domain.NoteView, error) {
+	return r.collect(func(n domain.Note) bool { return hasTag(n, tag) }, sort, true), nil
+}
+
+func hasTag(n domain.Note, tag string) bool {
+	return slices.Contains(n.Tags.Names(), tag)
+}
+
+func (r *FakeNoteRepo) collect(keep func(domain.Note) bool, sort domain.SortSpec, withContext bool) []domain.NoteView {
 	views := []domain.NoteView{}
 	for _, note := range r.Rows {
-		if note.DeletedAt == nil && note.SubjectID == subjectID {
-			views = append(views, r.viewOf(note, false))
+		if note.DeletedAt != nil || !keep(note) {
+			continue
 		}
+		v := r.viewOf(note, false)
+		if withContext {
+			sv, _ := r.Subjects.viewOf(r.Subjects.Rows[note.SubjectID])
+			v.Subject = &domain.SubjectRef{ID: sv.ID, Name: sv.Name.String()}
+			c := sv.Category
+			v.Category = &c
+		}
+		views = append(views, v)
 	}
 	slices.SortFunc(views, func(a, b domain.NoteView) int {
 		var c int
@@ -671,7 +693,7 @@ func (r *FakeNoteRepo) ListBySubject(_ context.Context, subjectID string, sort d
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	return views, nil
+	return views
 }
 
 func (r *FakeNoteRepo) CountAliveBySubject(_ context.Context, subjectID string) (int, error) {
@@ -688,4 +710,25 @@ func (r *FakeNoteRepo) CountAliveByKind(_ context.Context, kindID string) (int, 
 		return 0, err
 	}
 	return r.countAliveByKind(id), nil
+}
+
+// FakeTagQuery implements out.TagQuery over the fake note repository.
+type FakeTagQuery struct{ Notes *FakeNoteRepo }
+
+func (q FakeTagQuery) List(_ context.Context) ([]domain.TagCount, error) {
+	counts := map[string]int{}
+	for _, note := range q.Notes.Rows {
+		if note.DeletedAt != nil {
+			continue
+		}
+		for _, tag := range note.Tags.Names() {
+			counts[tag]++
+		}
+	}
+	out := make([]domain.TagCount, 0, len(counts))
+	for name, n := range counts {
+		out = append(out, domain.TagCount{Name: name, Count: n})
+	}
+	slices.SortFunc(out, func(a, b domain.TagCount) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }

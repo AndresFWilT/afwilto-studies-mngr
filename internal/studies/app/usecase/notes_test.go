@@ -18,6 +18,8 @@ type noteEnv struct {
 	repo     *testsupport.FakeNoteRepo
 
 	create   in.CreateNote
+	byTag    in.ListNotesByTag
+	tags     in.ListTags
 	get      in.GetNote
 	list     in.ListSubjectNotes
 	update   in.UpdateNote
@@ -50,6 +52,8 @@ func newNoteEnv(t *testing.T) noteEnv {
 	e := noteEnv{
 		clock: clock, cats: cats, subjects: subjects, kinds: kinds, repo: repo,
 		create:   NewCreateNoteService(repo, subjects, kinds, clock, ids),
+		byTag:    NewListNotesByTagService(repo),
+		tags:     NewListTagsService(testsupport.FakeTagQuery{Notes: repo}),
 		get:      NewGetNoteService(repo),
 		list:     NewListSubjectNotesService(repo, subjects),
 		update:   NewUpdateNoteService(repo, subjects, kinds, clock),
@@ -172,7 +176,7 @@ func TestListSubjectNotesSorting(t *testing.T) { // AC-B16
 		if err != nil {
 			t.Fatal(err)
 		}
-		list, err := e.list.Execute(ctx, e.subject.ID, spec)
+		list, err := e.list.Execute(ctx, e.subject.ID, nil, spec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +205,7 @@ func TestListSubjectNotesSorting(t *testing.T) { // AC-B16
 
 func TestListSubjectNotesOfMissingSubject(t *testing.T) {
 	e := newNoteEnv(t)
-	_, err := e.list.Execute(ctx, "0abcdef0-0000-7000-8000-999999999999", domain.SortSpec{})
+	_, err := e.list.Execute(ctx, "0abcdef0-0000-7000-8000-999999999999", nil, domain.SortSpec{})
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -336,4 +340,121 @@ func TestSubjectAndKindDeleteBlockedByAliveNotes(t *testing.T) { // BR-DEL1
 	if err := e.delKind.Execute(ctx, e.kind.ID); err != nil {
 		t.Fatalf("kind delete after note removed: %v", err)
 	}
+}
+
+// ── Slice 06: tags and slab links ───────────────────────────────────────────
+
+func (e noteEnv) addTagged(t *testing.T, title string, tags ...string) domain.NoteView {
+	t.Helper()
+	v, err := e.create.Execute(ctx, in.CreateNoteCommand{SubjectID: e.subject.ID, Title: title, KindID: e.kind.ID, Tags: tags})
+	if err != nil {
+		t.Fatalf("create %q: %v", title, err)
+	}
+	return v
+}
+
+func tagNames(v domain.NoteView) string { return strings.Join(v.Tags.Names(), ",") }
+
+func TestCreateNoteNormalizesTags(t *testing.T) { // AC-B20
+	e := newNoteEnv(t)
+	v := e.addTagged(t, "IAM", " Cloud Security ", "cloud-security", "IAM")
+	if got := tagNames(v); got != "cloud-security,iam" {
+		t.Fatalf("tags = %s", got)
+	}
+	if got, _ := e.get.Execute(ctx, v.ID); tagNames(got) != "cloud-security,iam" {
+		t.Fatalf("tags not persisted: %s", tagNames(got))
+	}
+	_, err := e.create.Execute(ctx, in.CreateNoteCommand{SubjectID: e.subject.ID, Title: "X", KindID: e.kind.ID, Tags: []string{"bad_tag!"}})
+	wantFieldViolation(t, err, "tags[0]", "format")
+}
+
+func TestCreateNoteStoresSlabLinks(t *testing.T) { // AC-B23
+	e := newNoteEnv(t)
+	links := []domain.SlabLinkInput{{Label: "B-Tree lab", Path: "/slab/ud/data-structures/b-tree"}}
+	v, err := e.create.Execute(ctx, in.CreateNoteCommand{SubjectID: e.subject.ID, Title: "B-Tree", KindID: e.kind.ID, SlabLinks: links})
+	if err != nil || len(v.SlabLinks) != 1 || v.SlabLinks[0].Path != links[0].Path {
+		t.Fatalf("got (%+v, %v)", v.SlabLinks, err)
+	}
+	_, err = e.create.Execute(ctx, in.CreateNoteCommand{SubjectID: e.subject.ID, Title: "Bad", KindID: e.kind.ID,
+		SlabLinks: []domain.SlabLinkInput{{Label: "x", Path: "/finance"}}})
+	wantFieldViolation(t, err, "slabLinks[0].path", "format")
+}
+
+func TestUpdateNoteReplacesTagsAndLinksOnly(t *testing.T) { // S06-5
+	e := newNoteEnv(t)
+	n := e.addTagged(t, "Storage", "s3", "iam")
+	links := []domain.SlabLinkInput{{Label: "l", Path: "/slab/a"}}
+
+	got, err := e.update.Execute(ctx, n.ID, in.UpdateNoteCommand{Version: 1,
+		Tags:      in.Patch[[]string]{Set: true, Value: &[]string{"S3", "ebs"}},
+		SlabLinks: in.Patch[[]domain.SlabLinkInput]{Set: true, Value: &links}})
+	if err != nil || got.Version != 2 || tagNames(got) != "ebs,s3" || len(got.SlabLinks) != 1 || got.Title.String() != "Storage" {
+		t.Fatalf("got (%+v, %v)", got, err)
+	}
+	// An unrelated edit keeps tags and links.
+	got, err = e.update.Execute(ctx, n.ID, in.UpdateNoteCommand{Version: 2, Content: set("x")})
+	if err != nil || tagNames(got) != "ebs,s3" || len(got.SlabLinks) != 1 {
+		t.Fatalf("unrelated edit lost tags/links: (%+v, %v)", got, err)
+	}
+	// Clearing.
+	empty := []string{}
+	got, err = e.update.Execute(ctx, n.ID, in.UpdateNoteCommand{Version: 3, Tags: in.Patch[[]string]{Set: true, Value: &empty}})
+	if err != nil || tagNames(got) != "" {
+		t.Fatalf("clear: (%+v, %v)", got, err)
+	}
+	_, err = e.update.Execute(ctx, n.ID, in.UpdateNoteCommand{Version: 4, Tags: in.Patch[[]string]{Set: true}})
+	wantFieldViolation(t, err, "tags", "required")
+	_, err = e.update.Execute(ctx, n.ID, in.UpdateNoteCommand{Version: 4, SlabLinks: in.Patch[[]domain.SlabLinkInput]{Set: true}})
+	wantFieldViolation(t, err, "slabLinks", "required")
+}
+
+func TestTagViewsAndCounts(t *testing.T) { // AC-B22, S06-3, S06-6
+	e := newNoteEnv(t)
+	other := e.addSubj(t, "Azure")
+	a := e.addTagged(t, "A", "iam", "s3")
+	b, err := e.create.Execute(ctx, in.CreateNoteCommand{SubjectID: other.ID, Title: "B", KindID: e.kind.ID, Tags: []string{"IAM"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts, _ := e.tags.Execute(ctx)
+	if len(counts) != 2 || counts[0] != (domain.TagCount{Name: "iam", Count: 2}) || counts[1] != (domain.TagCount{Name: "s3", Count: 1}) {
+		t.Fatalf("counts = %+v", counts)
+	}
+	view, err := e.byTag.Execute(ctx, " IAM ", domain.SortSpec{})
+	if err != nil || len(view) != 2 {
+		t.Fatalf("by tag = (%+v, %v)", view, err)
+	}
+	if view[0].Subject == nil || view[0].Subject.Name != "AWS" || view[0].Category == nil || view[0].Category.Path != "TI" {
+		t.Fatalf("missing subject/category: %+v", view[0])
+	}
+	subjOnly, _ := e.list.Execute(ctx, e.subject.ID, ptr("IAM"), domain.SortSpec{})
+	if len(subjOnly) != 1 || subjOnly[0].ID != a.ID || subjOnly[0].Subject != nil {
+		t.Fatalf("subject filter = %+v", subjOnly)
+	}
+
+	// A deleted note and an unlinked tag stop counting.
+	if err := e.delete.Execute(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.update.Execute(ctx, a.ID, in.UpdateNoteCommand{Version: 1, Tags: in.Patch[[]string]{Set: true, Value: &[]string{"s3"}}}); err != nil {
+		t.Fatal(err)
+	}
+	counts, _ = e.tags.Execute(ctx)
+	if len(counts) != 1 || counts[0] != (domain.TagCount{Name: "s3", Count: 1}) {
+		t.Fatalf("counts after delete/unlink = %+v", counts)
+	}
+	if got, _ := e.byTag.Execute(ctx, "iam", domain.SortSpec{}); len(got) != 0 {
+		t.Fatalf("iam view = %+v, want empty", got)
+	}
+}
+
+func TestTagQueryValidation(t *testing.T) {
+	e := newNoteEnv(t)
+	_, err := e.byTag.Execute(ctx, " ", domain.SortSpec{})
+	wantFieldViolation(t, err, "tag", "required")
+	_, err = e.byTag.Execute(ctx, "bad_tag!", domain.SortSpec{})
+	wantFieldViolation(t, err, "tag", "format")
+	_, err = e.list.Execute(ctx, e.subject.ID, ptr("bad_tag!"), domain.SortSpec{})
+	wantFieldViolation(t, err, "tag", "format")
 }

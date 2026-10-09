@@ -49,6 +49,7 @@ func main() {
 	noteKinds := postgres.NewNoteKindRepository(pool)
 	subjects := postgres.NewSubjectRepository(pool)
 	notes := postgres.NewNoteRepository(pool)
+	tags := postgres.NewTagQuery(pool)
 
 	router := studieshttp.NewRouter(studieshttp.RouterDeps{
 		Pinger:       pool,
@@ -61,6 +62,8 @@ func main() {
 		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
 		DeleteCategory: usecase.NewDeleteCategoryService(categories, subjects, clock),
 
+		ListNotesByTag:   usecase.NewListNotesByTagService(notes),
+		ListTags:         usecase.NewListTagsService(tags),
 		ListSubjectNotes: usecase.NewListSubjectNotesService(notes, subjects),
 		CreateNote:       usecase.NewCreateNoteService(notes, subjects, noteKinds, clock, ids),
 		GetNote:          usecase.NewGetNoteService(notes),
