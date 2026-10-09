@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -181,4 +182,21 @@ func TestDeleteSubjectAndCategoryBlockAPI(t *testing.T) { // S04-9, S04-10, S04-
 	if rec := e.do(t, http.MethodDelete, cpath, ""); rec.Code != 409 {
 		t.Errorf("status = %d, want 409", rec.Code)
 	}
+}
+
+// decodeList decodes a { data: [...] } list response.
+func decodeList(t *testing.T, rec *httptest.ResponseRecorder) []map[string]any {
+	t.Helper()
+	var env struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decoding %s: %v", rec.Body.String(), err)
+	}
+	return env.Data
+}
+
+func jsonString(s string) (string, error) {
+	b, err := json.Marshal(s)
+	return string(b), err
 }

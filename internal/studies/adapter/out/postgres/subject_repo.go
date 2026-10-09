@@ -31,6 +31,8 @@ func subjectWriteError(err error) error {
 	switch {
 	case pgErr.Code == uniqueViolation:
 		return domain.NewConflict("name", domain.RuleDuplicateName, "a subject with this name already exists in the category")
+	case pgErr.ConstraintName == "subject_in_use":
+		return domain.NewConflict("id", domain.RuleInUse, "subject has notes; move or delete them first")
 	case pgErr.Code == foreignKeyViolation, pgErr.ConstraintName == "subject_category_not_found":
 		return domain.SingleViolation("categoryId", "not_found", "category does not exist")
 	}
@@ -81,10 +83,10 @@ func (r *SubjectRepository) Get(ctx context.Context, id string) (domain.Subject,
 
 // aliveSubjects joins each alive subject to its alive category and the
 // category's derived display path (the category repository's recursive tree).
-// notes arrive in Slice 05, so note_count is 0 until then.
 const aliveSubjects = `
 	SELECT s.id, s.category_id, s.name, s.description, s.created_at, s.updated_at,
-	       t.id, t.name, t.color, t.path, 0 AS note_count
+	       t.id, t.name, t.color, t.path,
+	       (SELECT count(*) FROM notes n WHERE n.subject_id = s.id AND n.deleted_at IS NULL)::int AS note_count
 	FROM subjects s
 	JOIN (` + aliveTree + `) t ON t.id = s.category_id
 	WHERE s.deleted_at IS NULL`

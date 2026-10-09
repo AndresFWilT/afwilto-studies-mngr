@@ -19,11 +19,18 @@ func NewNoteKindRepository(pool *pgxpool.Pool) *NoteKindRepository {
 	return &NoteKindRepository{pool: pool}
 }
 
-// noteKindWriteError maps the alive-name unique index to a domain conflict.
+// noteKindWriteError maps the alive-name unique index and the kind guard
+// (migration 0006) to domain errors.
 func noteKindWriteError(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	switch {
+	case pgErr.Code == uniqueViolation:
 		return domain.NewConflict("name", domain.RuleDuplicateName, "a note kind with this name already exists")
+	case pgErr.ConstraintName == "kind_in_use":
+		return domain.NewConflict("id", domain.RuleInUse, "note kind is used by alive notes; change or delete them first")
 	}
 	return err
 }
@@ -70,10 +77,10 @@ func (r *NoteKindRepository) Get(ctx context.Context, id string) (domain.NoteKin
 	return kind, nil
 }
 
-// aliveKinds selects alive kinds with their note count (0 until notes exist
-// in Slice 05).
+// aliveKinds selects alive kinds with the number of alive notes using each.
 const aliveKinds = `
-	SELECT id, name, created_at, updated_at, 0 AS note_count
+	SELECT id, name, created_at, updated_at,
+	       (SELECT count(*) FROM notes n WHERE n.kind_id = note_kinds.id AND n.deleted_at IS NULL)::int AS note_count
 	FROM note_kinds
 	WHERE deleted_at IS NULL`
 

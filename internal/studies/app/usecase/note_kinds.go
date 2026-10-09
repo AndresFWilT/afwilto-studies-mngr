@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/out"
@@ -84,19 +85,27 @@ func (s *renameNoteKindService) Execute(ctx context.Context, id string, cmd in.R
 
 type deleteNoteKindService struct {
 	repo  out.NoteKindRepository
+	notes out.NoteRepository
 	clock out.Clock
 }
 
-func NewDeleteNoteKindService(repo out.NoteKindRepository, clock out.Clock) in.DeleteNoteKind {
-	return &deleteNoteKindService{repo: repo, clock: clock}
+func NewDeleteNoteKindService(repo out.NoteKindRepository, notes out.NoteRepository, clock out.Clock) in.DeleteNoteKind {
+	return &deleteNoteKindService{repo: repo, notes: notes, clock: clock}
 }
 
-// Execute deletes logically. The "used by alive notes" block of BR-DEL1 joins
-// in Slice 05, when the notes table exists.
+// Execute deletes logically. A kind used by alive notes is blocked (BR-DEL1).
 func (s *deleteNoteKindService) Execute(ctx context.Context, id string) error {
 	kind, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	count, err := s.notes.CountAliveByKind(ctx, id)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return domain.NewConflict("id", domain.RuleInUse,
+			fmt.Sprintf("note kind is used by %d notes; change or delete them first", count))
 	}
 	kind.Delete(s.clock.Now())
 	return s.repo.Update(ctx, kind)

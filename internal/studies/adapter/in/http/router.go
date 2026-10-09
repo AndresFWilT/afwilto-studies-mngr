@@ -19,6 +19,12 @@ type RouterDeps struct {
 	UpdateCategory in.UpdateCategory
 	DeleteCategory in.DeleteCategory
 
+	ListSubjectNotes in.ListSubjectNotes
+	CreateNote       in.CreateNote
+	GetNote          in.GetNote
+	UpdateNote       in.UpdateNote
+	DeleteNote       in.DeleteNote
+
 	ListSubjects  in.ListSubjects
 	CreateSubject in.CreateSubject
 	GetSubject    in.GetSubject
@@ -55,6 +61,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/subjects/{id}", handleGetSubject(deps.GetSubject))
 	mux.HandleFunc("PATCH /api/v1/subjects/{id}", handleUpdateSubject(deps.UpdateSubject))
 	mux.HandleFunc("DELETE /api/v1/subjects/{id}", handleDeleteSubject(deps.DeleteSubject))
+
+	mux.HandleFunc("GET /api/v1/subjects/{id}/notes", handleListSubjectNotes(deps.ListSubjectNotes))
+	mux.HandleFunc("POST /api/v1/subjects/{id}/notes", handleCreateNote(deps.CreateNote))
+	mux.HandleFunc("GET /api/v1/notes/{id}", handleGetNote(deps.GetNote))
+	mux.HandleFunc("PATCH /api/v1/notes/{id}", handleUpdateNote(deps.UpdateNote))
+	mux.HandleFunc("DELETE /api/v1/notes/{id}", handleDeleteNote(deps.DeleteNote))
 
 	var handler http.Handler = jsonFallback(mux)
 	if deps.MaxBodyBytes > 0 {

@@ -133,3 +133,63 @@ func toSubjectDTO(v domain.SubjectView) subjectDTO {
 		UpdatedAt:   v.UpdatedAt,
 	}
 }
+
+// ── Notes ───────────────────────────────────────────────────────────────────
+
+type createNoteRequest struct {
+	Title     string            `json:"title"`
+	KindID    *string           `json:"kindId"`
+	Content   *string           `json:"content"`
+	Tags      []string          `json:"tags"`
+	SlabLinks []json.RawMessage `json:"slabLinks"`
+}
+
+type updateNoteRequest struct {
+	Version   *int              `json:"version"`
+	Title     Opt[string]       `json:"title"`
+	KindID    Opt[string]       `json:"kindId"`
+	SubjectID Opt[string]       `json:"subjectId"`
+	Content   Opt[string]       `json:"content"`
+	Tags      []string          `json:"tags"`
+	SlabLinks []json.RawMessage `json:"slabLinks"`
+}
+
+type noteKindRefDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type noteSummaryDTO struct {
+	ID        string         `json:"id"`
+	SubjectID string         `json:"subjectId"`
+	Title     string         `json:"title"`
+	Kind      noteKindRefDTO `json:"kind"`
+	Tags      []string       `json:"tags"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	Version   int            `json:"version"`
+}
+
+// noteDTO is the full note; slabLinks arrive in Slice 06 and are always empty.
+type noteDTO struct {
+	noteSummaryDTO
+	Content   string `json:"content"`
+	SlabLinks []any  `json:"slabLinks"`
+}
+
+func toNoteSummaryDTO(v domain.NoteView) noteSummaryDTO {
+	tags := v.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	return noteSummaryDTO{
+		ID: v.ID, SubjectID: v.SubjectID, Title: v.Title.String(),
+		Kind:      noteKindRefDTO{ID: v.Kind.ID, Name: v.Kind.Name},
+		Tags:      tags,
+		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, Version: v.Version,
+	}
+}
+
+func toNoteDTO(v domain.NoteView) noteDTO {
+	return noteDTO{noteSummaryDTO: toNoteSummaryDTO(v), Content: v.Content.String(), SlabLinks: []any{}}
+}

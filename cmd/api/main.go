@@ -48,6 +48,7 @@ func main() {
 	categories := postgres.NewCategoryRepository(pool)
 	noteKinds := postgres.NewNoteKindRepository(pool)
 	subjects := postgres.NewSubjectRepository(pool)
+	notes := postgres.NewNoteRepository(pool)
 
 	router := studieshttp.NewRouter(studieshttp.RouterDeps{
 		Pinger:       pool,
@@ -60,17 +61,23 @@ func main() {
 		UpdateCategory: usecase.NewUpdateCategoryService(categories, clock),
 		DeleteCategory: usecase.NewDeleteCategoryService(categories, subjects, clock),
 
+		ListSubjectNotes: usecase.NewListSubjectNotesService(notes, subjects),
+		CreateNote:       usecase.NewCreateNoteService(notes, subjects, noteKinds, clock, ids),
+		GetNote:          usecase.NewGetNoteService(notes),
+		UpdateNote:       usecase.NewUpdateNoteService(notes, subjects, noteKinds, clock),
+		DeleteNote:       usecase.NewDeleteNoteService(notes, clock),
+
 		ListSubjects:  usecase.NewListSubjectsService(subjects),
 		CreateSubject: usecase.NewCreateSubjectService(subjects, categories, clock, ids),
 		GetSubject:    usecase.NewGetSubjectService(subjects),
 		UpdateSubject: usecase.NewUpdateSubjectService(subjects, categories, clock),
-		DeleteSubject: usecase.NewDeleteSubjectService(subjects, clock),
+		DeleteSubject: usecase.NewDeleteSubjectService(subjects, notes, clock),
 
 		ListNoteKinds:  usecase.NewListNoteKindsService(noteKinds),
 		CreateNoteKind: usecase.NewCreateNoteKindService(noteKinds, clock, ids),
 		GetNoteKind:    usecase.NewGetNoteKindService(noteKinds),
 		RenameNoteKind: usecase.NewRenameNoteKindService(noteKinds, clock),
-		DeleteNoteKind: usecase.NewDeleteNoteKindService(noteKinds, clock),
+		DeleteNoteKind: usecase.NewDeleteNoteKindService(noteKinds, notes, clock),
 	})
 
 	server := &http.Server{

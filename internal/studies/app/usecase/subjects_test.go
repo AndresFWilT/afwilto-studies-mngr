@@ -24,6 +24,7 @@ type subjEnv struct {
 func newSubjEnv() subjEnv {
 	cats := testsupport.NewFakeCategoryRepo()
 	repo := testsupport.NewFakeSubjectRepo(cats)
+	notes := testsupport.NewFakeNoteRepo(repo, testsupport.NewFakeNoteKindRepo())
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	createCat := NewCreateCategoryService(cats, clock, ids)
@@ -34,7 +35,7 @@ func newSubjEnv() subjEnv {
 		get:    NewGetSubjectService(repo),
 		list:   NewListSubjectsService(repo),
 		update: NewUpdateSubjectService(repo, cats, clock),
-		delete: NewDeleteSubjectService(repo, clock),
+		delete: NewDeleteSubjectService(repo, notes, clock),
 		addCat: func(t *testing.T, name string) domain.CategoryView {
 			t.Helper()
 			v, err := createCat.Execute(ctx, in.CreateCategoryCommand{Name: name, Color: "#22D3EE"})

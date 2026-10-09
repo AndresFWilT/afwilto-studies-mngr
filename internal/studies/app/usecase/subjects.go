@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/out"
@@ -124,19 +125,27 @@ func (s *updateSubjectService) Execute(ctx context.Context, id string, cmd in.Up
 
 type deleteSubjectService struct {
 	repo  out.SubjectRepository
+	notes out.NoteRepository
 	clock out.Clock
 }
 
-func NewDeleteSubjectService(repo out.SubjectRepository, clock out.Clock) in.DeleteSubject {
-	return &deleteSubjectService{repo: repo, clock: clock}
+func NewDeleteSubjectService(repo out.SubjectRepository, notes out.NoteRepository, clock out.Clock) in.DeleteSubject {
+	return &deleteSubjectService{repo: repo, notes: notes, clock: clock}
 }
 
-// Execute deletes logically. The "alive notes" block of BR-DEL1 joins in
-// Slice 05, when the notes table exists.
+// Execute deletes logically. Alive notes block it (BR-DEL1).
 func (s *deleteSubjectService) Execute(ctx context.Context, id string) error {
 	subject, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	count, err := s.notes.CountAliveBySubject(ctx, id)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return domain.NewConflict("id", domain.RuleInUse,
+			fmt.Sprintf("subject has %d notes; move or delete them first", count))
 	}
 	subject.Delete(s.clock.Now())
 	return s.repo.Update(ctx, subject)

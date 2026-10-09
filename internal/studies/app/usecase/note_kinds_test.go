@@ -20,6 +20,7 @@ type kindEnv struct {
 
 func newKindEnv() kindEnv {
 	repo := testsupport.NewFakeNoteKindRepo()
+	notes := testsupport.NewFakeNoteRepo(testsupport.NewFakeSubjectRepo(testsupport.NewFakeCategoryRepo()), repo)
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return kindEnv{
@@ -28,7 +29,7 @@ func newKindEnv() kindEnv {
 		get:    NewGetNoteKindService(repo),
 		list:   NewListNoteKindsService(repo),
 		rename: NewRenameNoteKindService(repo, clock),
-		delete: NewDeleteNoteKindService(repo, clock),
+		delete: NewDeleteNoteKindService(repo, notes, clock),
 	}
 }
 

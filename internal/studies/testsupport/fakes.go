@@ -263,6 +263,8 @@ func (r *FakeCategoryRepo) CountAliveChildren(_ context.Context, id string) (int
 // FakeNoteKindRepo implements out.NoteKindRepository in memory.
 type FakeNoteKindRepo struct {
 	Rows map[string]domain.NoteKind
+	// Notes, when linked by NewFakeNoteRepo, feeds NoteCount.
+	Notes *FakeNoteRepo
 }
 
 func NewFakeNoteKindRepo() *FakeNoteKindRepo {
@@ -330,14 +332,22 @@ func (r *FakeNoteKindRepo) GetView(ctx context.Context, id string) (domain.NoteK
 	if err != nil {
 		return domain.NoteKindView{}, err
 	}
-	return domain.NoteKindView{NoteKind: kind}, nil // notes arrive in Slice 05
+	return r.viewOf(kind), nil
+}
+
+func (r *FakeNoteKindRepo) viewOf(kind domain.NoteKind) domain.NoteKindView {
+	v := domain.NoteKindView{NoteKind: kind}
+	if r.Notes != nil {
+		v.NoteCount = r.Notes.countAliveByKind(kind.ID)
+	}
+	return v
 }
 
 func (r *FakeNoteKindRepo) List(_ context.Context) ([]domain.NoteKindView, error) {
 	views := []domain.NoteKindView{}
 	for _, kind := range r.Rows {
 		if kind.DeletedAt == nil {
-			views = append(views, domain.NoteKindView{NoteKind: kind})
+			views = append(views, r.viewOf(kind))
 		}
 	}
 	slices.SortFunc(views, func(a, b domain.NoteKindView) int {
@@ -355,6 +365,8 @@ func (r *FakeNoteKindRepo) List(_ context.Context) ([]domain.NoteKindView, error
 type FakeSubjectRepo struct {
 	Rows       map[string]domain.Subject
 	Categories *FakeCategoryRepo
+	// Notes, when linked by NewFakeNoteRepo, feeds NoteCount.
+	Notes *FakeNoteRepo
 }
 
 func NewFakeSubjectRepo(categories *FakeCategoryRepo) *FakeSubjectRepo {
@@ -437,10 +449,15 @@ func (r *FakeSubjectRepo) viewOf(s domain.Subject) (domain.SubjectView, bool) {
 	if !ok {
 		return domain.SubjectView{}, false
 	}
+	noteCount := 0
+	if r.Notes != nil {
+		noteCount = r.Notes.countAliveBySubject(s.ID)
+	}
 	return domain.SubjectView{
-		Subject:  s,
-		Category: domain.CategoryRef{ID: cv.ID, Name: cv.Name.String(), Color: cv.Color.String(), Path: cv.Path},
-	}, true // notes arrive in Slice 05: NoteCount stays 0
+		Subject:   s,
+		Category:  domain.CategoryRef{ID: cv.ID, Name: cv.Name.String(), Color: cv.Color.String(), Path: cv.Path},
+		NoteCount: noteCount,
+	}, true
 }
 
 func (r *FakeSubjectRepo) GetView(ctx context.Context, id string) (domain.SubjectView, error) {
@@ -484,4 +501,191 @@ func (r *FakeSubjectRepo) CountAliveInCategory(_ context.Context, categoryID str
 		return 0, err
 	}
 	return r.countAlive(id), nil
+}
+
+// FakeNoteRepo implements out.NoteRepository in memory. It resolves subjects
+// and kinds through the linked fakes and mirrors the database triggers that
+// reject a missing or deleted subject or kind.
+type FakeNoteRepo struct {
+	Rows     map[string]domain.Note
+	Subjects *FakeSubjectRepo
+	Kinds    *FakeNoteKindRepo
+}
+
+func NewFakeNoteRepo(subjects *FakeSubjectRepo, kinds *FakeNoteKindRepo) *FakeNoteRepo {
+	r := &FakeNoteRepo{Rows: map[string]domain.Note{}, Subjects: subjects, Kinds: kinds}
+	subjects.Notes = r
+	kinds.Notes = r
+	return r
+}
+
+func (r *FakeNoteRepo) countAliveBySubject(subjectID string) int {
+	n := 0
+	for _, note := range r.Rows {
+		if note.DeletedAt == nil && note.SubjectID == subjectID {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *FakeNoteRepo) countAliveByKind(kindID string) int {
+	n := 0
+	for _, note := range r.Rows {
+		if note.DeletedAt == nil && note.KindID == kindID {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *FakeNoteRepo) check(note domain.Note) (domain.Note, error) {
+	var err error
+	if note.ID, err = canon(note.ID); err != nil {
+		return note, err
+	}
+	if note.SubjectID, err = canon(note.SubjectID); err != nil {
+		return note, err
+	}
+	if note.KindID, err = canon(note.KindID); err != nil {
+		return note, err
+	}
+	if sub, ok := r.Subjects.Rows[note.SubjectID]; !ok || sub.DeletedAt != nil {
+		return note, domain.SingleViolation("subjectId", "not_found", "subject does not exist")
+	}
+	if kind, ok := r.Kinds.Rows[note.KindID]; !ok || kind.DeletedAt != nil {
+		return note, domain.SingleViolation("kindId", "not_found", "note kind does not exist")
+	}
+	for id, other := range r.Rows {
+		if id != note.ID && other.DeletedAt == nil && other.SubjectID == note.SubjectID && other.Title.Key() == note.Title.Key() {
+			return note, domain.NewConflict("title", domain.RuleDuplicateName, "a note with this title already exists in the subject")
+		}
+	}
+	return note, nil
+}
+
+func (r *FakeNoteRepo) Create(_ context.Context, note domain.Note) error {
+	note, err := r.check(note)
+	if err != nil {
+		return err
+	}
+	r.Rows[note.ID] = note
+	return nil
+}
+
+func (r *FakeNoteRepo) Update(_ context.Context, note domain.Note, expectedVersion int) error {
+	id, err := canon(note.ID)
+	if err != nil {
+		return err
+	}
+	current, ok := r.Rows[id]
+	if !ok || current.DeletedAt != nil {
+		return domain.ErrNotFound
+	}
+	if current.Version != expectedVersion {
+		return domain.NewConflict("version", domain.RuleStaleVersion, "the note was changed by someone else")
+	}
+	note, err = r.check(note)
+	if err != nil {
+		return err
+	}
+	r.Rows[note.ID] = note
+	return nil
+}
+
+func (r *FakeNoteRepo) Delete(_ context.Context, note domain.Note) error {
+	id, err := canon(note.ID)
+	if err != nil {
+		return err
+	}
+	current, ok := r.Rows[id]
+	if !ok || current.DeletedAt != nil {
+		return domain.ErrNotFound
+	}
+	current.DeletedAt = note.DeletedAt
+	r.Rows[id] = current
+	return nil
+}
+
+func (r *FakeNoteRepo) Get(_ context.Context, id string) (domain.Note, error) {
+	id, err := canon(id)
+	if err != nil {
+		return domain.Note{}, err
+	}
+	note, ok := r.Rows[id]
+	if !ok || note.DeletedAt != nil {
+		return domain.Note{}, domain.ErrNotFound
+	}
+	return note, nil
+}
+
+func (r *FakeNoteRepo) viewOf(note domain.Note, withContent bool) domain.NoteView {
+	if !withContent {
+		note.Content = domain.MarkdownContent{}
+	}
+	kind := r.Kinds.Rows[note.KindID]
+	return domain.NoteView{
+		Note: note,
+		Kind: domain.NoteKindRef{ID: kind.ID, Name: kind.Name.String()},
+		Tags: []string{},
+	}
+}
+
+func (r *FakeNoteRepo) GetView(ctx context.Context, id string) (domain.NoteView, error) {
+	note, err := r.Get(ctx, id)
+	if err != nil {
+		return domain.NoteView{}, err
+	}
+	return r.viewOf(note, true), nil
+}
+
+func (r *FakeNoteRepo) ListBySubject(_ context.Context, subjectID string, sort domain.SortSpec) ([]domain.NoteView, error) {
+	subjectID, err := canon(subjectID)
+	if err != nil {
+		return nil, err
+	}
+	views := []domain.NoteView{}
+	for _, note := range r.Rows {
+		if note.DeletedAt == nil && note.SubjectID == subjectID {
+			views = append(views, r.viewOf(note, false))
+		}
+	}
+	slices.SortFunc(views, func(a, b domain.NoteView) int {
+		var c int
+		switch sort.Field {
+		case domain.SortByCreatedAt:
+			c = a.CreatedAt.Compare(b.CreatedAt)
+		case domain.SortByUpdatedAt:
+			c = a.UpdatedAt.Compare(b.UpdatedAt)
+		default:
+			c = strings.Compare(a.Title.Key(), b.Title.Key())
+		}
+		if sort.Desc {
+			c = -c
+		}
+		if c != 0 {
+			return c
+		}
+		if c = strings.Compare(a.Title.Key(), b.Title.Key()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return views, nil
+}
+
+func (r *FakeNoteRepo) CountAliveBySubject(_ context.Context, subjectID string) (int, error) {
+	id, err := canon(subjectID)
+	if err != nil {
+		return 0, err
+	}
+	return r.countAliveBySubject(id), nil
+}
+
+func (r *FakeNoteRepo) CountAliveByKind(_ context.Context, kindID string) (int, error) {
+	id, err := canon(kindID)
+	if err != nil {
+		return 0, err
+	}
+	return r.countAliveByKind(id), nil
 }
