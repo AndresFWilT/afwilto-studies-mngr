@@ -106,6 +106,12 @@ func TestSeedNetworksCidrOnFreshDatabase(t *testing.T) {
 	if !strings.Contains(content, "| 50 | /78 | 1,125,899,906,842,624 |") {
 		t.Error("the /78 row must read 1,125,899,906,842,624")
 	}
+	if !strings.Contains(content, "lists `/78` as 1,125,899,906,842,620") {
+		t.Error("the note must carry the /78 correction")
+	}
+	if !strings.Contains(content, "## Source") || !strings.Contains(content, "A Comprehensive Guide to IPv4 and IPv6 CIDR") {
+		t.Error("the note must credit its source article")
+	}
 	if !strings.Contains(content, "](/slab/cidr)") {
 		t.Error("the note must link to the calculator")
 	}
