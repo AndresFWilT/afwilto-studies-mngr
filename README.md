@@ -21,6 +21,16 @@ enforced twice:
 
 To recover a deleted row: `UPDATE <table> SET deleted_at = NULL WHERE id = '…';`.
 
+## Seed data
+
+Migration `0004` seeds the note kinds Summary, Cheat sheet and Notes. Migration
+`0008` (spec 17) seeds **TI → Networks → CIDR** with the note "IPv4 and IPv6 CIDR — guide and
+tables", which links to the slab CIDR Calculator.
+
+- The seed reuses existing alive rows by name and never modifies them.
+- Rows it creates have fixed ids `00000000-0000-7000-8017-00000000000N`.
+- Its down migration logically deletes only those rows.
+
 ## Run
 
 ```bash
