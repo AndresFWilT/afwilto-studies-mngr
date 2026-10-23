@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -14,9 +15,12 @@ import (
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 )
 
-// maxJSONBytes is the size limit of a .json upload (Spec 18 FR-4); the route's
-// overall body cap, MAX_IMPORT_BYTES, is larger because zip files come later.
-const maxJSONBytes = 10 << 20
+// The size limits of an upload (Spec 18 FR-4); the route's overall body cap,
+// MAX_IMPORT_BYTES, sits above both.
+const (
+	maxJSONBytes = 10 << 20
+	maxZipBytes  = 50 << 20
+)
 
 const maxPrimaryRunes = 40
 
@@ -88,8 +92,16 @@ func readUpload(r *http.Request) uploadedFile {
 	}
 }
 
+// readPart reads the part up to the limit of its kind, plus one byte so that an
+// oversized file is noticed: a zip (by its magic) may be 50 MiB, anything else 10.
 func readPart(part *multipart.Part) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(part, maxJSONBytes+1))
+	body := bufio.NewReader(part)
+	head, _ := body.Peek(len(zipMagic))
+	limit := int64(maxJSONBytes)
+	if isZip(head) {
+		limit = maxZipBytes
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
@@ -133,17 +145,40 @@ func handleImportQuestions(imp in.ImportQuestions, reader *QuestionFileReader) h
 		case upload.err != nil:
 			translateError(w, upload.err)
 			return
-		case !looksLikeJSON(upload.data):
-			translateError(w, domain.SingleViolation("file", domain.RuleFileType,
-				"only a .json file (a JSON object) is accepted; zip import is not available yet"))
+		case isZip(upload.data) && len(upload.data) > maxZipBytes:
+			payloadTooLarge(w, "a .zip import file may be at most 50 MiB")
 			return
-		case len(upload.data) > maxJSONBytes:
+		case !isZip(upload.data) && !looksLikeJSON(upload.data):
+			translateError(w, domain.SingleViolation("file", domain.RuleFileType,
+				"only a .json file (a JSON object) or a .zip is accepted"))
+			return
+		case !isZip(upload.data) && len(upload.data) > maxJSONBytes:
 			payloadTooLarge(w, "a .json import file may be at most 10 MiB")
 			return
 		}
 
 		cmd := in.ImportQuestionsCommand{ExamID: examID, DryRun: params.dryRun, Primary: params.primary}
-		cmd.File, cmd.FileErrors = reader.Read(upload.data)
+		jsonBytes := upload.data
+		var archive *importZip
+		if isZip(upload.data) {
+			var err error
+			if archive, err = openImportZip(upload.data, defaultZipLimits()); err != nil {
+				translateError(w, err)
+				return
+			}
+			if jsonBytes, err = archive.RootJSON(); err != nil {
+				translateError(w, err)
+				return
+			}
+		}
+		cmd.File, cmd.FileErrors = reader.Read(jsonBytes)
+		if archive != nil && cmd.File != nil {
+			var err error
+			if cmd.Archive, err = archiveForQuestions(archive, cmd.File.Questions); err != nil {
+				translateError(w, err)
+				return
+			}
+		}
 		report, err := imp.Execute(r.Context(), cmd)
 		if err != nil {
 			translateError(w, err)

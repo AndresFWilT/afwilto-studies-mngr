@@ -37,9 +37,10 @@ type Deps struct {
 }
 
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02),
-// the question import (slice 03) and the bank browser, question and merge
-// endpoints (slice 04), each when its dependencies are wired. The other
-// documented endpoints answer the JSON 404 until slices 05–06b.
+// the question import (slice 03), the bank browser, question and merge
+// endpoints (slice 04) and the media and export endpoints (slice 05), each
+// when its dependencies are wired. The other documented endpoints answer the
+// JSON 404 until slices 06a–06b.
 func Register(deps Deps) func(*http.ServeMux) {
 	return func(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/v1/subjects/{id}/exams", handleListSubjectExams(deps.ListSubjectExams))
@@ -58,6 +59,12 @@ func Register(deps Deps) func(*http.ServeMux) {
 		}
 		if deps.DeleteQuestion != nil {
 			mux.HandleFunc("DELETE /api/v1/questions/{id}", handleDeleteQuestion(deps.DeleteQuestion))
+		}
+		if deps.GetMedia != nil {
+			mux.HandleFunc("GET /api/v1/media/{sha256}", handleGetMedia(deps.GetMedia))
+		}
+		if deps.ExportQuestions != nil && deps.GetMedia != nil {
+			mux.HandleFunc("GET /api/v1/exams/{id}/questions/export", handleExportQuestions(deps.ExportQuestions, deps.GetMedia))
 		}
 		if deps.MergeCategories != nil {
 			mux.HandleFunc("POST /api/v1/exams/{id}/categories/merge", handleMergeCategories(deps.MergeCategories))

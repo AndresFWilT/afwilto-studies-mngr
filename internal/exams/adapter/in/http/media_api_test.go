@@ -136,7 +136,7 @@ func TestADryRunOfAZipReportsTheMediaAndStoresNothing(t *testing.T) { // FR-4 dr
 
 func TestEveryS052FixtureIsRejectedWithItsOwnRuleAndNothingIsWritten(t *testing.T) { // S05-2, AC-12
 	jsonWith := func(ref string) zent {
-		return zent{name: "questions.json", data: []byte(`{"format":"afwilto-questions","formatVersion":1,"questions":[{"key":"q","type":"single","stem":"![x](media:` + ref + `)","options":[{"text":"a","correct":true},{"text":"b"}]}]}`)}
+		return zent{name: "questions.json", data: []byte(`{"format":"afwilto-questions","formatVersion":1,"questions":[{"key":"q","type":"single","stem":"![x](media:` + ref + `)","options":[{"text":"a","correct":true},{"text":"b","correct":false}]}]}`)}
 	}
 	thousandAndOne := append([]zent{{name: "questions.json", data: example(t, "aws-text.json")}}, filler(1000)...)
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
@@ -386,10 +386,10 @@ func TestExportThenReimportIntoTheSameExamReportsEveryQuestionUnchanged(t *testi
 func TestExportOfAMixedBankKeepsEachQuestionsSourceAndRoundTrips(t *testing.T) { // S05-3 mixed TD + Whizlabs, FR-2 source override
 	e := newZipEnv(t, zipCap)
 	body := func(key, kind, name string) string {
-		return `{"key":"` + key + `","type":"single","stem":"s ` + key + `","options":[{"text":"a","correct":true},{"text":"b"}],"source":{"kind":"` + kind + `","name":"` + name + `"},"categories":{"Dominio":["A"],"Servicio":["S3","IAM"]},"origin":{"set":"Set 1","number":3},"difficulty":"hard","explanation":"because"}`
+		return `{"key":"` + key + `","type":"single","stem":"s ` + key + `","options":[{"text":"a","correct":true},{"text":"b","correct":false}],"source":{"kind":"` + kind + `","name":"` + name + `"},"categories":{"Dominio":["A"],"Servicio":["S3","IAM"]},"origin":{"set":"Set 1","number":3},"difficulty":"hard","explanation":"because"}`
 	}
 	file := `{"format":"afwilto-questions","formatVersion":1,"questions":[` +
-		strings.Join([]string{body("td-1", "purchased", "Tutorials Dojo"), body("wl-1", "purchased", "Whizlabs"), body("td-2", "purchased", "Tutorials Dojo"), body("own-1", "own", "Mine")}, ",") + `]}`
+		strings.Join([]string{body("wl-1", "purchased", "Whizlabs"), body("td-1", "purchased", "Tutorials Dojo"), body("td-2", "purchased", "Tutorials Dojo"), body("own-1", "own", "Mine")}, ",") + `]}`
 	if rec := e.post(t, importPath(e.examID, ""), "q.json", []byte(file)); rec.Code != http.StatusOK {
 		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
 	}
