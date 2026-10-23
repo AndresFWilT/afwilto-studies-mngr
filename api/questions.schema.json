@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://afwilto.local/schemas/afwilto-questions.v1.json",
+  "title": "afwilto questions file, format version 1 (Spec 18 FR-2)",
+  "description": "Questions only. Classifications and categories are inferred on import (FR-3). Rules not expressible here: unique keys within the file (BR-Q3), single-valued primary classification (BR-C2), media references resolving (BR-Q4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "formatVersion",
+    "questions"
+  ],
+  "properties": {
+    "format": {
+      "const": "afwilto-questions"
+    },
+    "formatVersion": {
+      "const": 1
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2000,
+      "items": {
+        "$ref": "#/$defs/question"
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "purchased",
+            "generated",
+            "own",
+            "other"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      }
+    },
+    "mediaRef": {
+      "type": "string",
+      "pattern": "^media:[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correct"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "image": {
+          "$ref": "#/$defs/mediaRef"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "correct": {
+          "type": "boolean"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "image"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "image": [
+          "alt"
+        ]
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "type",
+        "stem",
+        "options"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+        },
+        "type": {
+          "enum": [
+            "single",
+            "multi"
+          ]
+        },
+        "stem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/option"
+          }
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "difficulty": {
+          "enum": [
+            "easy",
+            "medium",
+            "hard"
+          ]
+        },
+        "categories": {
+          "type": "object",
+          "maxProperties": 2,
+          "propertyNames": {
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/name"
+                },
+                {
+                  "maxLength": 80
+                }
+              ]
+            }
+          }
+        },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "set": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "noteRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/source",
+          "description": "Overrides the file-level source for this question (exports of mixed banks)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "single"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "contains": {
+                  "properties": {
+                    "correct": {
+                      "const": true
+                    }
+                  }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "multi"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "minItems": 3,
+                "allOf": [
+                  {
+                    "contains": {
+                      "properties": {
+                        "correct": {
+                          "const": true
+                        }
+                      }
+                    },
+                    "minContains": 2
+                  },
+                  {
+                    "contains": {
+                      "properties": {
+                        "correct": {
+                          "const": false
+                        }
+                      }
+                    },
+                    "minContains": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

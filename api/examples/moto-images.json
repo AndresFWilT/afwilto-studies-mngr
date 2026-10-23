@@ -1,0 +1,31 @@
+{
+  "format": "afwilto-questions",
+  "formatVersion": 1,
+  "source": { "kind": "own", "name": "Spec 18 example (images; ships as questions.json inside a .zip with img/)" },
+  "questions": [
+    {
+      "key": "example-moto-0001",
+      "type": "single",
+      "stem": "¿Qué indica esta señal?\n\n![Disco rojo con una barra horizontal blanca](media:img/entrada-prohibida.png)",
+      "options": [
+        { "text": "Entrada prohibida", "correct": true, "rationale": "Disco rojo con barra blanca horizontal." },
+        { "text": "Circulación prohibida", "correct": false, "rationale": "Esa es un disco blanco con borde rojo, sin barra." },
+        { "text": "Fin de prohibiciones", "correct": false }
+      ],
+      "explanation": "Template T2: stem image, text options.",
+      "categories": { "Tema": ["Señales"] }
+    },
+    {
+      "key": "example-moto-0002",
+      "type": "single",
+      "stem": "¿Cuál es la señal de **ceda el paso**?",
+      "options": [
+        { "image": "media:img/ceda-el-paso.png", "alt": "Triángulo invertido blanco con borde rojo", "correct": true },
+        { "image": "media:img/stop.png", "alt": "Octágono rojo con la palabra STOP", "correct": false },
+        { "text": "Ninguna de las anteriores", "correct": false }
+      ],
+      "explanation": "Template T3: option cards; the text-only option renders as a text card of the same size.",
+      "categories": { "Tema": ["Señales"] }
+    }
+  ]
+}

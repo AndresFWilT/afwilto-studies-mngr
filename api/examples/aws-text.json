@@ -1,0 +1,49 @@
+{
+  "format": "afwilto-questions",
+  "formatVersion": 1,
+  "source": { "kind": "own", "name": "Spec 18 example (AWS, text only)" },
+  "questions": [
+    {
+      "key": "example-aws-0001",
+      "type": "single",
+      "stem": "A company wants to grant an EC2 instance access to an S3 bucket **without storing long-term credentials** on the instance. What should a solutions architect do?",
+      "options": [
+        { "text": "Store an IAM user's access keys in the instance user data.", "correct": false, "rationale": "User data is readable from the instance and the keys are long-term." },
+        { "text": "Attach an IAM role to the instance through an instance profile.", "correct": true, "rationale": "The role delivers temporary credentials that rotate automatically." },
+        { "text": "Make the bucket public and restrict it by IP address.", "correct": false, "rationale": "A public bucket is not access control for a workload." }
+      ],
+      "explanation": "Instance profiles give EC2 temporary credentials from STS, so nothing long-lived is stored on the instance.",
+      "difficulty": "easy",
+      "categories": { "Dominio": ["Arquitecturas seguras"], "Servicio": ["IAM", "Amazon S3"] },
+      "origin": { "set": "Spec examples", "number": 1 }
+    },
+    {
+      "key": "example-aws-0002",
+      "type": "multi",
+      "stem": "Which **two** actions improve the upload speed of large objects to an S3 bucket from distant locations? (Choose two.)",
+      "options": [
+        { "text": "Enable S3 Transfer Acceleration.", "correct": true, "rationale": "Uploads enter at the nearest edge location." },
+        { "text": "Use multipart upload.", "correct": true, "rationale": "Parts upload in parallel and failed parts are retried alone." },
+        { "text": "Enable S3 Versioning.", "correct": false, "rationale": "Versioning protects data; it does not affect throughput." },
+        { "text": "Change the storage class to S3 Glacier.", "correct": false, "rationale": "The storage class does not speed up ingestion." }
+      ],
+      "explanation": "Transfer Acceleration shortens the network path, and multipart upload parallelizes the transfer.",
+      "difficulty": "medium",
+      "categories": { "Dominio": ["Alto rendimiento"], "Servicio": ["Amazon S3"] },
+      "origin": { "set": "Spec examples", "number": 2 }
+    },
+    {
+      "key": "example-aws-0003",
+      "type": "single",
+      "stem": "Which Route 53 setting determines how long resolvers cache a record?\n\n```text\nexample.com.  300  IN  A  203.0.113.10\n```",
+      "options": [
+        { "text": "Health check interval", "correct": false },
+        { "text": "TTL", "correct": true },
+        { "text": "Routing policy", "correct": false }
+      ],
+      "explanation": "The TTL (300 seconds in the example) tells resolvers how long to cache the answer.",
+      "categories": { "Dominio": ["Arquitecturas resilientes"], "Servicio": ["Route 53"] },
+      "origin": { "noteRef": "Route 53 (diap. 1)" }
+    }
+  ]
+}
