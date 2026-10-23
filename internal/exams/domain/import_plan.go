@@ -322,34 +322,16 @@ func PlanImport(in PlanInput) ImportPlan {
 	return buildPlan(in, uses, reg, primaryName, hasPrimary)
 }
 
-var markdownMedia = regexp.MustCompile(`\]\(\s*<?media:([^)\s>]+)`)
-
 // scanMedia finds every media: reference. In this slice there is no zip, so
 // each one is media_missing (BR-Q4).
 func scanMedia(qs []FileQuestion) (refs []string, errs []ImportError) {
 	seen := map[string]bool{}
-	report := func(path, ref string) {
-		errs = append(errs, ImportError{Path: path, Rule: RuleMediaMissing,
-			Message: fmt.Sprintf("media:%s is not in this import (images arrive with a .zip, which is not accepted yet)", ref)})
-		if !seen[ref] {
-			seen[ref] = true
-			refs = append(refs, ref)
-		}
-	}
-	markdown := func(path, text string) {
-		for _, m := range markdownMedia.FindAllStringSubmatch(text, -1) {
-			report(path, m[1])
-		}
-	}
-	for i, q := range qs {
-		markdown(qPath(i, "stem"), q.Stem)
-		markdown(qPath(i, "explanation"), q.Explanation)
-		for j, o := range q.Options {
-			markdown(qPath(i, fmt.Sprintf("options[%d].text", j)), o.Text)
-			if ref, ok := strings.CutPrefix(o.Image, "media:"); ok {
-				report(qPath(i, fmt.Sprintf("options[%d].image", j)), ref)
-			}
-			markdown(qPath(i, fmt.Sprintf("options[%d].rationale", j)), o.Rationale)
+	for _, r := range MediaRefs(qs) {
+		errs = append(errs, ImportError{Path: r.Path, Rule: RuleMediaMissing,
+			Message: fmt.Sprintf("media:%s is not in this import (images arrive with a .zip, which is not accepted yet)", r.Ref)})
+		if !seen[r.Ref] {
+			seen[r.Ref] = true
+			refs = append(refs, r.Ref)
 		}
 	}
 	return refs, errs
