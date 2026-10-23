@@ -52,8 +52,9 @@ type Deps struct {
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02),
 // the question import (slice 03), the bank browser, question and merge
 // endpoints (slice 04), the media and export endpoints (slice 05) and the
-// session preview and attempt start (slice 06a), each when its dependencies
-// are wired. The other documented endpoints answer the JSON 404 until 06b.
+// session preview and attempt start (slice 06a), and the attempt reads,
+// answers, submit, review and the exam history (slice 06b), each when its
+// dependencies are wired.
 func Register(deps Deps) func(*http.ServeMux) {
 	return func(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/v1/subjects/{id}/exams", handleListSubjectExams(deps.ListSubjectExams))
@@ -87,6 +88,21 @@ func Register(deps Deps) func(*http.ServeMux) {
 		}
 		if deps.StartAttempt != nil {
 			mux.HandleFunc("POST /api/v1/exams/{id}/attempts", handleStartAttempt(deps.StartAttempt))
+		}
+		if deps.ListExamAttempts != nil {
+			mux.HandleFunc("GET /api/v1/exams/{id}/attempts", handleListExamAttempts(deps.ListExamAttempts))
+		}
+		if deps.GetAttempt != nil {
+			mux.HandleFunc("GET /api/v1/attempts/{id}", handleGetAttempt(deps.GetAttempt))
+		}
+		if deps.AnswerItem != nil {
+			mux.HandleFunc("PUT /api/v1/attempts/{id}/items/{position}", handleAnswerItem(deps.AnswerItem))
+		}
+		if deps.SubmitAttempt != nil {
+			mux.HandleFunc("POST /api/v1/attempts/{id}/submit", handleSubmitAttempt(deps.SubmitAttempt))
+		}
+		if deps.ReviewAttempt != nil {
+			mux.HandleFunc("GET /api/v1/attempts/{id}/review", handleReviewAttempt(deps.ReviewAttempt))
 		}
 	}
 }

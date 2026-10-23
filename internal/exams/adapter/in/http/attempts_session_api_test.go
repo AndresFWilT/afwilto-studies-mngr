@@ -535,9 +535,9 @@ func TestReviewListsEveryItemWithTheKeyAndLinksTheNoteUntilItIsDeleted(t *testin
 	if body.Data[1]["correct"] != true {
 		t.Errorf("second item = %v, want correct", body.Data[1])
 	}
-	for _, it := range body.Data[1:] {
-		if _, has := it["noteId"]; has {
-			t.Errorf("item %v has a noteId although its noteRef matches no note or is empty", it["position"])
+	for _, it := range body.Data {
+		if it["noteId"] != noteID { // the three Timed Set 3 questions share the noteRef "03 · Route 53 (diap. 12)"
+			t.Errorf("item %v noteId = %v, want %s", it["position"], it["noteId"], noteID)
 		}
 	}
 	for _, it := range body.Data {
@@ -550,11 +550,16 @@ func TestReviewListsEveryItemWithTheKeyAndLinksTheNoteUntilItIsDeleted(t *testin
 
 	a.notes.Delete(a.examID, "03 · Route 53")
 	rec = a.review(t, id)
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Data) == 0 {
+	var after struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil || len(after.Data) == 0 {
 		t.Fatalf("review after the delete: %v, body %s", err, rec.Body)
 	}
-	if _, has := body.Data[0]["noteId"]; has {
-		t.Errorf("noteId = %v after the note was deleted, want it absent", body.Data[0]["noteId"])
+	for _, it := range after.Data {
+		if _, has := it["noteId"]; has {
+			t.Errorf("item %v noteId = %v after the note was deleted, want it absent", it["position"], it["noteId"])
+		}
 	}
 }
 

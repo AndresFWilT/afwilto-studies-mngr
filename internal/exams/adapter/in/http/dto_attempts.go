@@ -215,15 +215,61 @@ type attemptOptionDTO struct {
 	Alt   string `json:"alt,omitempty"`
 }
 
-// attemptItemDTO is the contract's AttemptItem as the start returns it. It is
-// built field by field from the snapshot and never serializes the snapshot
-// itself, so the answer key cannot reach the wire by adding a field there.
+// revealDTO is the answer key of one item: correctness, correct labels,
+// rationales by label and the explanation (null when absent). It is embedded
+// by pointer and left nil everywhere the key must stay hidden, so omitting it
+// is the default and showing it takes an explicit decision.
+type revealDTO struct {
+	Correct       bool              `json:"correct"`
+	CorrectLabels []string          `json:"correctLabels"`
+	Rationales    map[string]string `json:"rationales"`
+	Explanation   *string           `json:"explanation"`
+}
+
+func toRevealDTO(r domain.Reveal) *revealDTO {
+	dto := &revealDTO{Correct: r.Correct, CorrectLabels: r.CorrectLabels, Rationales: r.Rationales}
+	if dto.CorrectLabels == nil {
+		dto.CorrectLabels = []string{}
+	}
+	if dto.Rationales == nil {
+		dto.Rationales = map[string]string{}
+	}
+	if r.Explanation != "" {
+		explanation := r.Explanation
+		dto.Explanation = &explanation
+	}
+	return dto
+}
+
+func orEmpty(labels []string) []string {
+	if labels == nil {
+		return []string{}
+	}
+	return labels
+}
+
+func toOptionDTOs(options []domain.SnapshotOption) []attemptOptionDTO {
+	out := make([]attemptOptionDTO, len(options))
+	for i, o := range options {
+		out[i] = attemptOptionDTO{Label: o.Label, Text: o.Text, Image: o.Image, Alt: o.Alt}
+	}
+	return out
+}
+
+// attemptItemDTO is the contract's AttemptItem. It is built field by field from
+// the snapshot and never serializes the snapshot itself, so the answer key
+// cannot reach the wire by adding a field there. The reveal is set only for
+// items revealed under feedback each.
 type attemptItemDTO struct {
 	Position    int                `json:"position"`
 	Stem        string             `json:"stem"`
 	Type        string             `json:"type"`
 	ChooseCount *int               `json:"chooseCount,omitempty"`
 	Options     []attemptOptionDTO `json:"options"`
+	Selected    []string           `json:"selected"`
+	Flagged     bool               `json:"flagged"`
+	Answered    bool               `json:"answered"`
+	*revealDTO
 }
 
 // attemptDTO is the contract's Attempt.
@@ -237,6 +283,7 @@ type attemptDTO struct {
 	RemainingSeconds *int             `json:"remainingSeconds,omitempty"`
 	SuggestedMinutes int              `json:"suggestedMinutes"`
 	Items            []attemptItemDTO `json:"items"`
+	Result           *resultDTO       `json:"result,omitempty"`
 }
 
 func toAttemptDTO(v domain.AttemptView) attemptDTO {
@@ -249,15 +296,183 @@ func toAttemptDTO(v domain.AttemptView) attemptDTO {
 		deadline := v.DeadlineAt.UTC()
 		dto.DeadlineAt = &deadline
 	}
+	if v.Result != nil {
+		result := toResultDTO(*v.Result)
+		dto.Result = &result
+	}
 	for i, it := range v.Items {
-		item := attemptItemDTO{Position: it.Position, Stem: it.Snapshot.Stem, Type: string(it.Snapshot.Type), Options: make([]attemptOptionDTO, len(it.Snapshot.Options))}
+		item := attemptItemDTO{
+			Position: it.Position, Stem: it.Snapshot.Stem, Type: string(it.Snapshot.Type), Options: toOptionDTOs(it.Snapshot.Options),
+			Selected: orEmpty(it.Selected), Flagged: it.Flagged, Answered: len(it.Selected) > 0,
+		}
 		if n := it.Snapshot.ChooseCount(); n > 0 {
 			item.ChooseCount = &n
 		}
-		for j, o := range it.Snapshot.Options {
-			item.Options[j] = attemptOptionDTO{Label: o.Label, Text: o.Text, Image: o.Image, Alt: o.Alt}
+		if it.Revealed {
+			item.revealDTO = toRevealDTO(it.Reveal())
 		}
 		dto.Items[i] = item
 	}
 	return dto
+}
+
+// ── answer ──────────────────────────────────────────────────────────────────
+
+// answerRequest is the contract's AnswerRequest; both fields are pointers so a
+// missing or null one is "required" and not a silent zero.
+type answerRequest struct {
+	Selected *[]string `json:"selected"`
+	Flagged  *bool     `json:"flagged"`
+}
+
+func (r answerRequest) toDomain() (domain.AnswerInput, []domain.Violation) {
+	var bad []domain.Violation
+	if r.Selected == nil {
+		bad = append(bad, required("selected"))
+	}
+	if r.Flagged == nil {
+		bad = append(bad, required("flagged"))
+	}
+	if len(bad) > 0 {
+		return domain.AnswerInput{}, bad
+	}
+	return domain.AnswerInput{Selected: *r.Selected, Flagged: *r.Flagged}, nil
+}
+
+// answerDTO is the data of the contract's AnswerResponse. With feedback end it
+// holds the position, the selection and the flag, plus the server clock on
+// timed attempts: nothing about correctness (BR-A4).
+type answerDTO struct {
+	Position         int      `json:"position"`
+	Selected         []string `json:"selected"`
+	Flagged          bool     `json:"flagged"`
+	RemainingSeconds *int     `json:"remainingSeconds,omitempty"`
+	*revealDTO
+}
+
+func toAnswerDTO(o domain.AnswerOutcome) answerDTO {
+	dto := answerDTO{Position: o.Position, Selected: orEmpty(o.Selected), Flagged: o.Flagged, RemainingSeconds: o.RemainingSeconds}
+	if o.Reveal != nil {
+		dto.revealDTO = toRevealDTO(*o.Reveal)
+	}
+	return dto
+}
+
+// ── result ──────────────────────────────────────────────────────────────────
+
+type categoryScoreDTO struct {
+	Name    string  `json:"name"`
+	Correct int     `json:"correct"`
+	Total   int     `json:"total"`
+	Percent float64 `json:"percent"`
+}
+
+type classificationScoreDTO struct {
+	Classification string             `json:"classification"`
+	Categories     []categoryScoreDTO `json:"categories"`
+}
+
+// resultDTO is the contract's AttemptResult; passed is an explicit null for
+// anything but a simulation.
+type resultDTO struct {
+	ScorePercent    float64                  `json:"scorePercent"`
+	Passed          *bool                    `json:"passed"`
+	CorrectCount    int                      `json:"correctCount"`
+	Total           int                      `json:"total"`
+	DurationSeconds int                      `json:"durationSeconds"`
+	Breakdown       []classificationScoreDTO `json:"breakdown"`
+}
+
+func toResultDTO(r domain.AttemptResult) resultDTO {
+	dto := resultDTO{
+		ScorePercent: r.ScorePercent, Passed: r.Passed, CorrectCount: r.CorrectCount, Total: r.Total, DurationSeconds: r.DurationSeconds,
+		Breakdown: make([]classificationScoreDTO, len(r.Breakdown)),
+	}
+	for i, c := range r.Breakdown {
+		cats := make([]categoryScoreDTO, len(c.Categories))
+		for j, s := range c.Categories {
+			cats[j] = categoryScoreDTO{Name: s.Name, Correct: s.Correct, Total: s.Total, Percent: s.Percent}
+		}
+		dto.Breakdown[i] = classificationScoreDTO{Classification: c.Classification, Categories: cats}
+	}
+	return dto
+}
+
+// ── review ──────────────────────────────────────────────────────────────────
+
+type reviewCategoryDTO struct {
+	Classification string `json:"classification"`
+	Name           string `json:"name"`
+}
+
+// reviewItemDTO is the contract's ReviewItem.
+type reviewItemDTO struct {
+	Position   int                 `json:"position"`
+	Stem       string              `json:"stem"`
+	Type       string              `json:"type"`
+	Options    []attemptOptionDTO  `json:"options"`
+	Selected   []string            `json:"selected"`
+	Flagged    bool                `json:"flagged"`
+	Categories []reviewCategoryDTO `json:"categories"`
+	NoteID     string              `json:"noteId,omitempty"`
+	*revealDTO
+}
+
+func toReviewItemDTOs(items []domain.ReviewItem) []reviewItemDTO {
+	out := make([]reviewItemDTO, len(items))
+	for i, r := range items {
+		it := r.Item
+		dto := reviewItemDTO{
+			Position: it.Position, Stem: it.Snapshot.Stem, Type: string(it.Snapshot.Type), Options: toOptionDTOs(it.Snapshot.Options),
+			Selected: orEmpty(it.Selected), Flagged: it.Flagged, Categories: make([]reviewCategoryDTO, len(it.Snapshot.Categories)),
+			NoteID: r.NoteID, revealDTO: toRevealDTO(r.Reveal),
+		}
+		for j, c := range it.Snapshot.Categories {
+			dto.Categories[j] = reviewCategoryDTO{Classification: c.Classification, Name: c.Category}
+		}
+		out[i] = dto
+	}
+	return out
+}
+
+// ── history ─────────────────────────────────────────────────────────────────
+
+// attemptSummaryDTO is the contract's AttemptSummary; the outcome fields are
+// absent while the attempt is open and passed is absent unless the attempt is a
+// simulation.
+type attemptSummaryDTO struct {
+	ID              string    `json:"id"`
+	SelectionKind   string    `json:"selectionKind"`
+	TimingKind      string    `json:"timingKind"`
+	Feedback        string    `json:"feedback"`
+	Status          string    `json:"status"`
+	StartedAt       time.Time `json:"startedAt"`
+	DurationSeconds *int      `json:"durationSeconds,omitempty"`
+	ScorePercent    *float64  `json:"scorePercent,omitempty"`
+	Passed          *bool     `json:"passed,omitempty"`
+}
+
+type trendPointDTO struct {
+	At           time.Time `json:"at"`
+	ScorePercent float64   `json:"scorePercent"`
+}
+
+type historyMetaDTO struct {
+	TotalItems int             `json:"totalItems"`
+	Trend      []trendPointDTO `json:"trend"`
+}
+
+func toHistoryDTO(h domain.AttemptHistory) ([]attemptSummaryDTO, historyMetaDTO) {
+	rows := make([]attemptSummaryDTO, len(h.Attempts))
+	for i, s := range h.Attempts {
+		rows[i] = attemptSummaryDTO{
+			ID: s.ID, SelectionKind: string(s.SelectionKind), TimingKind: string(s.TimingKind), Feedback: string(s.Feedback), Status: string(s.Status),
+			StartedAt: s.StartedAt.UTC(), DurationSeconds: s.DurationSeconds, ScorePercent: s.ScorePercent, Passed: s.Passed,
+		}
+	}
+	meta := historyMetaDTO{TotalItems: len(rows), Trend: make([]trendPointDTO, len(h.Trend))}
+	for i, p := range h.Trend {
+		meta.Trend[i] = trendPointDTO{At: p.At.UTC(), ScorePercent: p.ScorePercent}
+	}
+	return rows, meta
 }
