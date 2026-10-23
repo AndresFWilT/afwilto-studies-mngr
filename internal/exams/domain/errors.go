@@ -18,6 +18,8 @@ type Violation struct {
 	Field   string
 	Rule    string
 	Message string
+	// Shortage is set on insufficient_questions: the category that is short.
+	Shortage *Shortage
 }
 
 // ValidationError carries field-level violations; the HTTP adapter translates
