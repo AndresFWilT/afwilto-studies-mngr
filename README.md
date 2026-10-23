@@ -49,6 +49,7 @@ DATABASE_URL=postgres://studies:studies@localhost:5432/studies?sslmode=disable m
 | `ALLOW_ORIGINS` | `http://localhost:3000,http://localhost:3008` | CORS allowlist (shell + standalone MFE) |
 | `MAX_BODY_BYTES` | `1048576` | Request body cap (413 above it) |
 | `MIGRATE_ON_START` | `true` | Apply `migrations/` at startup |
+| `MEDIA_DIR` | `/data/media` | Where question images are stored (`ab/cd/<sha256>`); a volume in the platform. `/readyz` fails while it is not writable |
 
 ## Test
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/afwilto/studies-mngr/configs"
 	examshttp "github.com/afwilto/studies-mngr/internal/exams/adapter/in/http"
+	"github.com/afwilto/studies-mngr/internal/exams/adapter/out/fsstore"
 	examspostgres "github.com/afwilto/studies-mngr/internal/exams/adapter/out/postgres"
 	examsusecase "github.com/afwilto/studies-mngr/internal/exams/app/usecase"
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
@@ -56,8 +57,15 @@ func main() {
 	tags := postgres.NewTagQuery(pool)
 	subjectExams := postgres.NewSubjectExamCounter(pool)
 
+	// The media directory is a volume in the platform; if it cannot be made the
+	// service still starts and /readyz says why it is not ready.
+	if err := os.MkdirAll(cfg.MediaDir, 0o755); err != nil {
+		slog.Error("creating the media directory", "dir", cfg.MediaDir, "err", err)
+	}
+	mediaStore := fsstore.NewDiskFileStorage(cfg.MediaDir)
+
 	studiesDeps := studieshttp.RouterDeps{
-		Pinger: pool,
+		Pinger: newReadiness(pool, mediaStore),
 
 		ListCategories: usecase.NewListCategoriesService(categories),
 		CreateCategory: usecase.NewCreateCategoryService(categories, clock, ids),
@@ -89,6 +97,7 @@ func main() {
 	examRepo := examspostgres.NewExamRepository(pool)
 	examSubjects := examspostgres.NewSubjectDirectory(pool)
 	questionBank := examspostgres.NewQuestionBankRepository(pool)
+	mediaIndex := examspostgres.NewMediaRepository(pool)
 	questionFiles, err := examshttp.NewQuestionFileReader() // compiles the embedded schema once
 	if err != nil {
 		slog.Error("compiling the question import schema", "err", err)
@@ -100,13 +109,16 @@ func main() {
 		GetExam:          examsusecase.NewGetExamService(examRepo),
 		UpdateExam:       examsusecase.NewUpdateExamService(examRepo, questionBank, clock),
 		DeleteExam:       examsusecase.NewDeleteExamService(examRepo, clock),
-		ImportQuestions:  examsusecase.NewImportQuestionsService(questionBank, clock, ids),
+		ImportQuestions:  examsusecase.NewImportQuestionsService(questionBank, clock, ids, examsusecase.WithMedia(mediaIndex, mediaStore)),
 		FileReader:       questionFiles,
 
 		ListExamQuestions: examsusecase.NewListExamQuestionsService(questionBank),
 		GetQuestion:       examsusecase.NewGetQuestionService(questionBank),
 		DeleteQuestion:    examsusecase.NewDeleteQuestionService(questionBank, clock),
 		MergeCategories:   examsusecase.NewMergeCategoriesService(examRepo, questionBank, clock),
+
+		GetMedia:        examsusecase.NewGetMediaService(mediaIndex, mediaStore),
+		ExportQuestions: examsusecase.NewExportQuestionsService(questionBank, mediaIndex),
 	}
 
 	router := httpx.NewServer(httpx.Config{

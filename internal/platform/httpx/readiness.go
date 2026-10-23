@@ -26,9 +26,17 @@ type NotReadyError struct {
 func (e *NotReadyError) Error() string { return fmt.Sprintf("%s unavailable: %v", e.Component, e.Err) }
 func (e *NotReadyError) Unwrap() error { return e.Err }
 
-type allReady struct{}
+type readiness []Check
 
-func (allReady) Ping(context.Context) error { return nil }
+// Readiness is a Pinger that succeeds when every check does. The first check
+// to fail ends it with a *NotReadyError naming that component.
+func Readiness(checks ...Check) Pinger { return readiness(checks) }
 
-// Readiness is a Pinger that succeeds when every check does.
-func Readiness(checks ...Check) Pinger { return allReady{} }
+func (r readiness) Ping(ctx context.Context) error {
+	for _, c := range r {
+		if err := c.Pinger.Ping(ctx); err != nil {
+			return &NotReadyError{Component: c.Name, Err: err}
+		}
+	}
+	return nil
+}

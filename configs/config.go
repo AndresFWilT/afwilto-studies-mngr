@@ -26,6 +26,7 @@ func Load() Config {
 		MaxBodyBytes:   envInt64Or("MAX_BODY_BYTES", 1048576),
 		MaxImportBytes: envInt64Or("MAX_IMPORT_BYTES", 53477376), // 51 MiB: a 50 MiB zip plus multipart overhead
 		MigrateOnStart: envBoolOr("MIGRATE_ON_START", true),
+		MediaDir:       envOr("MEDIA_DIR", "/data/media"),
 	}
 }
 
