@@ -3,9 +3,11 @@ info:
   title: AFWILTO Studies Manager
   description: >
     Personal knowledge base API: hierarchical categories, subjects, and
-    Markdown notes with kinds, tags and links to slab. Contract-first artifact
-    for frontend/docs/specs/16-studies.md — handlers are written to satisfy
-    this file and API tests assert conformance against it.
+    Markdown notes with kinds, tags and links to slab, plus exam simulations
+    (question banks, sessions and attempts) for any subject. Contract-first
+    artifact for frontend/docs/specs/16-studies.md and 18-exam-simulations.md
+    — handlers are written to satisfy this file and API tests assert
+    conformance against it.
 
 
     Deletion is always logical (Spec 16 FR-0): every DELETE endpoint marks the
@@ -15,7 +17,13 @@ info:
     Unknown routes answer 404 not_found and a wrong method on a known route
     answers 405 method_not_allowed (with an Allow header), both in the JSON
     error envelope.
-  version: 0.1.0
+
+
+    v0.2.0 documents the whole exams API (Spec 18 §6) ahead of its
+    implementation: a documented path whose slice has not landed still answers
+    404 not_found. Request bodies are capped at MAX_BODY_BYTES (1 MiB) except
+    the question import, which has MAX_IMPORT_BYTES (51 MiB).
+  version: 0.2.0
 servers:
   - url: http://localhost:8084
     description: Local Docker platform
@@ -375,6 +383,397 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TagListResponse' }
 
+  # ── Exams (Spec 18 FR-1; slices 02 and 04) ─────────────────────────────────
+  /api/v1/subjects/{id}/exams:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listSubjectExams
+      summary: Alive exams of a subject, ordered by name then id
+      responses:
+        '200':
+          description: Exam summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExamSummaryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createExam
+      summary: Create an exam on an alive subject (404 only for a malformed id; an unknown subject is 422 not_found)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExamRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExamResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/exams/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getExam
+      summary: Exam detail with classifications, categories, weights, pace and counts
+      responses:
+        '200':
+          description: Exam
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExamResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateExam
+      summary: >
+        Edit the exam parameters and, in the same atomic write, classification
+        names, the primary classification, weights, weight mode and category
+        names and pace. version is required (409 stale_version on mismatch).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateExamRequest' }
+      responses:
+        '200':
+          description: Updated; version incremented by 1
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExamResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      operationId: deleteExam
+      summary: Logical delete; 409 in_use while alive questions exist
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/exams/{id}/categories/merge:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: mergeExamCategories
+      summary: >
+        Move the questions of one category into another of the same
+        classification and delete the first logically (slice 04)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MergeCategoriesRequest' }
+      responses:
+        '200':
+          description: Merged; the exam version is incremented
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExamResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  # ── Question bank (Spec 18 FR-4, FR-5; slices 03–05) ───────────────────────
+  /api/v1/exams/{id}/questions/import:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: importQuestions
+      summary: >
+        Import a .json (or .zip with images) of questions. dryRun=true writes
+        nothing and returns the report; dryRun=false applies all-or-nothing.
+        The body cap is MAX_IMPORT_BYTES (51 MiB by default), not
+        MAX_BODY_BYTES; a .json above 10 MiB is 413 as well.
+      parameters:
+        - name: dryRun
+          in: query
+          description: Report only, write nothing
+          schema: { type: boolean, default: false }
+        - name: primary
+          in: query
+          description: >
+            Name of the primary classification on the first import into an empty
+            exam; ignored once the exam has a primary
+          schema: { type: string, minLength: 1, maxLength: 40 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: A .json (≤ 10 MiB) or a .zip (≤ 50 MiB) in the afwilto-questions format
+      responses:
+        '200':
+          description: The report of a dry run, or of an applied import
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportReportResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422':
+          description: >
+            Nothing was written. Either the full ImportReport (errors[] holds
+            the failures with JSON paths) or, when the file itself is
+            unusable (file_type, zip_*), the plain error envelope.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - $ref: '#/components/schemas/ImportReportResponse'
+
+  /api/v1/exams/{id}/questions/export:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: exportQuestions
+      summary: The bank as a .zip with questions.json and img/<sha256>.<ext>
+      responses:
+        '200':
+          description: Zip archive; re-importing it reports every question unchanged
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/exams/{id}/questions:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listExamQuestions
+      summary: >
+        Bank browser. Filters combine with AND. Sorted by origin.set, then
+        origin.number, then key.
+      parameters:
+        - name: category
+          in: query
+          description: Only questions linked to this category id
+          schema: { type: string, format: uuid }
+        - name: origin
+          in: query
+          description: Only questions whose origin.set equals this value
+          schema: { type: string }
+        - name: difficulty
+          in: query
+          schema: { $ref: '#/components/schemas/Difficulty' }
+        - name: q
+          in: query
+          description: Case-insensitive substring of the stem
+          schema: { type: string }
+        - name: unclassified
+          in: query
+          description: Only questions with no category in the primary classification
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Question summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionSummaryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/questions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getQuestion
+      summary: Full question with options in stored order, correct flags and rationales
+      responses:
+        '200':
+          description: Question
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteQuestion
+      summary: Logical delete; recomputes inferred weights. Past attempts keep their snapshot.
+      responses:
+        '204': { description: Deleted (logically) }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/media/{sha256}:
+    parameters:
+      - name: sha256
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+    get:
+      operationId: getMedia
+      summary: Image bytes by content hash (a malformed or unknown hash is 404)
+      responses:
+        '200':
+          description: The stored image with its original content type
+          headers:
+            Cache-Control:
+              description: public, max-age=31536000, immutable
+              schema: { type: string }
+              required: true
+            X-Content-Type-Options:
+              description: nosniff
+              schema: { type: string }
+              required: true
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Sessions and attempts (Spec 18 FR-7..FR-10; slices 06a and 06b) ────────
+  /api/v1/exams/{id}/sessions/preview:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: previewSession
+      summary: Pool size and suggested time for a session config; no side effects
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionPreviewRequest' }
+      responses:
+        '200':
+          description: Preview
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionPreviewResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/exams/{id}/attempts:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listExamAttempts
+      summary: >
+        Attempt history, newest first. meta.trend holds the closed
+        simulation attempts only, oldest first (D-11).
+      responses:
+        '200':
+          description: Attempt summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttemptSummaryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: startAttempt
+      summary: >
+        Draw the questions, freeze the snapshot and start an attempt. 409
+        attempt_in_progress (details[0].field = attemptId, the id in the
+        message) when the exam already has one open.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartAttemptRequest' }
+      responses:
+        '201':
+          description: >
+            Started. Items hold no correct flags, rationales or explanations.
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttemptResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/attempts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getAttempt
+      summary: Attempt state with remainingSeconds computed by the server (finalizes an expired attempt first)
+      responses:
+        '200':
+          description: Attempt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttemptResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/attempts/{id}/items/{position}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+      - name: position
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+    put:
+      operationId: answerAttemptItem
+      summary: >
+        Answer and flag one item. With feedback end the response never carries
+        correctness; with feedback each it adds the reveal fields and locks the
+        answer (D-13).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnswerRequest' }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnswerResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /api/v1/attempts/{id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: submitAttempt
+      summary: Close and score the attempt (409 attempt_closed when it is already closed)
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttemptResultResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/attempts/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: reviewAttempt
+      summary: Every item with snapshot, selection, correct labels, rationales and explanation; 409 attempt_in_progress while open
+      responses:
+        '200':
+          description: Review items in position order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   parameters:
     Id:
@@ -406,19 +805,24 @@ components:
     Conflict:
       description: >
         Business conflict. details[0].rule is one of duplicate_name, in_use,
-        stale_version.
+        stale_version, attempt_in_progress, attempt_expired, attempt_closed
+        or answer_locked (see ErrorDetail.rule).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
     PayloadTooLarge:
-      description: Request body exceeds MAX_BODY_BYTES (1 MiB by default)
+      description: >
+        Request body exceeds MAX_BODY_BYTES (1 MiB by default); on the
+        question import, MAX_IMPORT_BYTES (51 MiB by default) or a .json above
+        10 MiB
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
     ValidationFailed:
       description: >
         Shape or business-rule violation. details[].rule includes not_found
-        (reference to a missing or deleted row), max_depth and cycle.
+        (reference to a missing or deleted row), max_depth and cycle, and the
+        exams rules listed in ErrorDetail.rule.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -681,6 +1085,651 @@ components:
           items: { $ref: '#/components/schemas/Tag' }
         meta: { $ref: '#/components/schemas/ListMeta' }
 
+    # ── Exams (Spec 18 §2) ──
+    Sha256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    Difficulty:
+      type: string
+      enum: [easy, medium, hard]
+    QuestionType:
+      type: string
+      enum: [single, multi]
+    OptionLabel:
+      type: string
+      pattern: '^[A-F]$'
+      description: Assigned from the option order, A for the first option
+    ExamSummary:
+      type: object
+      required: [id, subjectId, name, questionCount, timeLimitMin, passPercent, questionTotal, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        subjectId: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        questionCount: { type: integer, minimum: 1, maximum: 200, description: Questions of the real simulation }
+        timeLimitMin: { type: integer, minimum: 1, maximum: 600 }
+        passPercent: { type: integer, minimum: 1, maximum: 100 }
+        questionTotal: { type: integer, minimum: 0, description: Alive questions in the bank }
+        lastSimulation:
+          type: object
+          description: The latest closed simulation attempt; absent until there is one
+          required: [scorePercent, passed, at]
+          properties:
+            scorePercent: { type: number, minimum: 0, maximum: 100 }
+            passed: { type: boolean }
+            at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ExamCategory:
+      type: object
+      description: >
+        A category of an exam classification. Named ExamCategory because
+        Category is the studies category-tree schema.
+      required: [id, key, name, weightPercent, paceQuestions, paceMinutes, questionCount]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        key: { type: string, description: Slug of the name }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        weightPercent:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+          description: Primary classification only; null on the secondary one
+        paceQuestions: { type: [integer, 'null'], minimum: 1 }
+        paceMinutes: { type: [integer, 'null'], minimum: 1 }
+        questionCount: { type: integer, minimum: 0, description: Alive questions linked to the category }
+    Classification:
+      type: object
+      required: [id, name, position, weightMode, categories]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 40 }
+        position: { type: integer, enum: [0, 1], description: 0 is the primary classification }
+        weightMode:
+          type: string
+          enum: [inferred, manual]
+          description: Only meaningful on the primary classification
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/ExamCategory' }
+    Exam:
+      allOf:
+        - $ref: '#/components/schemas/ExamSummary'
+        - type: object
+          required: [classifications]
+          properties:
+            classifications:
+              type: array
+              maxItems: 2
+              items: { $ref: '#/components/schemas/Classification' }
+    CreateExamRequest:
+      type: object
+      required: [name, questionCount, timeLimitMin, passPercent]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        questionCount: { type: integer, minimum: 1, maximum: 200 }
+        timeLimitMin: { type: integer, minimum: 1, maximum: 600 }
+        passPercent: { type: integer, minimum: 1, maximum: 100 }
+    UpdateExamRequest:
+      type: object
+      required: [version]
+      description: >
+        Absent ≠ null for the pace pair: null clears it. Everything is applied
+        atomically under the exam version.
+      properties:
+        version: { type: integer, minimum: 1, description: The version the client read }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        questionCount: { type: integer, minimum: 1, maximum: 200 }
+        timeLimitMin: { type: integer, minimum: 1, maximum: 600 }
+        passPercent: { type: integer, minimum: 1, maximum: 100 }
+        classifications:
+          type: array
+          description: Rename classifications
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { $ref: '#/components/schemas/Uuid' }
+              name: { type: string, minLength: 1, maxLength: 40 }
+        primaryClassificationId:
+          $ref: '#/components/schemas/Uuid'
+        weights:
+          type: array
+          description: Manual primary weights; must cover every alive primary category and sum to 100
+          items:
+            type: object
+            required: [categoryId, percent]
+            properties:
+              categoryId: { $ref: '#/components/schemas/Uuid' }
+              percent: { type: integer, minimum: 0, maximum: 100 }
+        weightMode:
+          type: string
+          enum: [inferred]
+          description: Drops manual weights and recomputes them
+        categories:
+          type: array
+          description: Rename categories and set the pace pair (both values or null for both)
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { $ref: '#/components/schemas/Uuid' }
+              name: { type: string, minLength: 1, maxLength: 80 }
+              paceQuestions: { type: [integer, 'null'], minimum: 1 }
+              paceMinutes: { type: [integer, 'null'], minimum: 1 }
+    MergeCategoriesRequest:
+      type: object
+      required: [from, into]
+      properties:
+        from: { $ref: '#/components/schemas/Uuid' }
+        into: { $ref: '#/components/schemas/Uuid' }
+    ExamResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Exam' }
+    ExamSummaryListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ExamSummary' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Questions ──
+    SourceKind:
+      type: string
+      enum: [purchased, generated, own, other]
+    Source:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { $ref: '#/components/schemas/SourceKind' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+    Origin:
+      type: object
+      minProperties: 1
+      properties:
+        set: { type: string, minLength: 1, maxLength: 120 }
+        number: { type: integer, minimum: 1 }
+        noteRef: { type: string, minLength: 1, maxLength: 200 }
+    QuestionCategoryRef:
+      type: object
+      required: [classification, name]
+      properties:
+        classification: { type: string }
+        name: { type: string }
+    QuestionOption:
+      type: object
+      required: [position, label, correct]
+      properties:
+        position: { type: integer, minimum: 0, maximum: 5 }
+        label: { $ref: '#/components/schemas/OptionLabel' }
+        text: { type: string, minLength: 1, maxLength: 2000, description: Markdown }
+        image: { type: string, pattern: '^media:[0-9a-f]{64}$', description: Stored form of the reference }
+        alt: { type: string, minLength: 1, maxLength: 300 }
+        correct: { type: boolean }
+        rationale: { type: string, minLength: 1, maxLength: 4000, description: Markdown }
+    QuestionSummary:
+      type: object
+      required: [id, key, type, stemExcerpt, categories, difficulty, origin, version, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,99}$' }
+        type: { $ref: '#/components/schemas/QuestionType' }
+        stemExcerpt: { type: string, maxLength: 200, description: 'First 200 characters of the stem, Markdown syntax stripped' }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionCategoryRef' }
+        difficulty:
+          oneOf:
+            - $ref: '#/components/schemas/Difficulty'
+            - type: 'null'
+        origin:
+          oneOf:
+            - $ref: '#/components/schemas/Origin'
+            - type: 'null'
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+    Question:
+      type: object
+      required: [id, examId, key, type, stem, explanation, difficulty, source, origin, categories, options, version, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        examId: { $ref: '#/components/schemas/Uuid' }
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,99}$' }
+        type: { $ref: '#/components/schemas/QuestionType' }
+        stem: { type: string, minLength: 1, maxLength: 10000, description: Markdown; images appear as media:<sha256> }
+        explanation: { type: [string, 'null'], maxLength: 20000, description: Markdown }
+        difficulty:
+          oneOf:
+            - $ref: '#/components/schemas/Difficulty'
+            - type: 'null'
+        source: { $ref: '#/components/schemas/Source' }
+        origin:
+          oneOf:
+            - $ref: '#/components/schemas/Origin'
+            - type: 'null'
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionCategoryRef' }
+        options:
+          type: array
+          minItems: 2
+          maxItems: 6
+          items: { $ref: '#/components/schemas/QuestionOption' }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    QuestionResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Question' }
+    QuestionSummaryListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionSummary' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    # ── Import report (Spec 18 FR-4) ──
+    ImportError:
+      type: object
+      required: [path, rule, message]
+      properties:
+        path: { type: string, description: "JSON path, e.g. questions[3].options" }
+        rule: { type: string }
+        message: { type: string }
+    ImportReport:
+      type: object
+      required: [dryRun, applied, counts, keys, errors, primary, newClassifications, newCategories, weightsAfter, duplicateStems, media, preview, warnings]
+      properties:
+        dryRun: { type: boolean }
+        applied: { type: boolean, description: True only when dryRun is false and the import was committed }
+        counts:
+          type: object
+          required: [create, update, unchanged, invalid]
+          properties:
+            create: { type: integer, minimum: 0 }
+            update: { type: integer, minimum: 0 }
+            unchanged: { type: integer, minimum: 0 }
+            invalid: { type: integer, minimum: 0 }
+        keys:
+          type: object
+          required: [create, update, unchanged]
+          properties:
+            create: { type: array, items: { type: string } }
+            update: { type: array, items: { type: string } }
+            unchanged: { type: array, items: { type: string } }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ImportError' }
+        primary:
+          type: [string, 'null']
+          description: Name of the primary classification; null when none could be resolved
+        newClassifications:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+        newCategories:
+          type: array
+          items:
+            type: object
+            required: [classification, name, similarTo]
+            properties:
+              classification: { type: string }
+              name: { type: string }
+              similarTo:
+                type: array
+                description: Existing categories within Levenshtein distance 2, or with the same slug
+                items: { type: string }
+        weightsAfter:
+          type: array
+          items:
+            type: object
+            required: [category, percent, mode]
+            properties:
+              category: { type: string }
+              percent: { type: integer, minimum: 0, maximum: 100 }
+              mode: { type: string, enum: [inferred, manual] }
+        duplicateStems:
+          type: array
+          items:
+            type: object
+            required: [key, existingKey]
+            properties:
+              key: { type: string }
+              existingKey: { type: string }
+        media:
+          type: object
+          required: [referenced, inZip, missing, unused]
+          properties:
+            referenced: { type: integer, minimum: 0 }
+            inZip: { type: integer, minimum: 0 }
+            missing: { type: array, items: { type: string } }
+            unused: { type: array, items: { type: string } }
+        preview:
+          type: array
+          maxItems: 5
+          description: The first 5 questions as they will be stored
+          items: { $ref: '#/components/schemas/Question' }
+        warnings:
+          type: array
+          items: { type: string }
+    ImportReportResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ImportReport' }
+
+    # ── Sessions (Spec 18 FR-7, FR-8) ──
+    SessionConfig:
+      type: object
+      required: [selection]
+      description: >
+        For selection.kind simulation, timing and feedback must be omitted
+        (they are forced to the exam time and end); sending them is 422
+        locked_by_simulation. For every other kind both are required.
+      properties:
+        selection:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [simulation] }
+            - type: object
+              additionalProperties: false
+              required: [kind, count]
+              properties:
+                kind: { type: string, enum: [random] }
+                count: { type: integer, minimum: 1, maximum: 200 }
+            - type: object
+              additionalProperties: false
+              required: [kind, classificationId, categoryIds, count]
+              properties:
+                kind: { type: string, enum: [categories] }
+                classificationId: { $ref: '#/components/schemas/Uuid' }
+                categoryIds:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/Uuid' }
+                count:
+                  oneOf:
+                    - { type: integer, minimum: 1, maximum: 200 }
+                    - { type: string, enum: [all] }
+            - type: object
+              additionalProperties: false
+              required: [kind, set]
+              properties:
+                kind: { type: string, enum: [origin-set] }
+                set: { type: string, minLength: 1, maxLength: 120 }
+        timing:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [untimed] }
+            - type: object
+              additionalProperties: false
+              required: [kind, minutes]
+              properties:
+                kind: { type: string, enum: [timed] }
+                minutes: { type: integer, minimum: 1, maximum: 600 }
+        feedback:
+          type: string
+          enum: [end, each]
+    SessionPreviewRequest:
+      type: object
+      required: [config]
+      properties:
+        config: { $ref: '#/components/schemas/SessionConfig' }
+    SessionPreview:
+      type: object
+      required: [poolSize, drawCount, suggestedMinutes, shortages]
+      properties:
+        poolSize: { type: integer, minimum: 0 }
+        drawCount: { type: integer, minimum: 0 }
+        suggestedMinutes: { type: integer, minimum: 0 }
+        shortages:
+          type: array
+          items:
+            type: object
+            required: [category, needed, available]
+            properties:
+              category: { type: string }
+              needed: { type: integer, minimum: 1 }
+              available: { type: integer, minimum: 0 }
+    SessionPreviewResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/SessionPreview' }
+
+    # ── Attempts (Spec 18 FR-9, FR-10) ──
+    AttemptStatus:
+      type: string
+      enum: [in_progress, submitted, expired]
+    AttemptOption:
+      type: object
+      required: [label]
+      properties:
+        label: { $ref: '#/components/schemas/OptionLabel' }
+        text: { type: string, description: Markdown }
+        image: { type: string, pattern: '^media:[0-9a-f]{64}$' }
+        alt: { type: string }
+    AttemptItem:
+      type: object
+      required: [position, stem, type, options]
+      description: >
+        The start response carries no correctness at any depth: no correct,
+        correctLabels, rationales or explanation. GET adds selected, flagged and
+        answered, and the reveal fields only for items revealed under feedback each.
+      properties:
+        position: { type: integer, minimum: 0 }
+        stem: { type: string, description: Markdown }
+        type: { $ref: '#/components/schemas/QuestionType' }
+        chooseCount: { type: integer, minimum: 2, description: Multi only; the number of correct options }
+        options:
+          type: array
+          minItems: 2
+          maxItems: 6
+          items: { $ref: '#/components/schemas/AttemptOption' }
+        selected:
+          type: array
+          items: { $ref: '#/components/schemas/OptionLabel' }
+        flagged: { type: boolean }
+        answered: { type: boolean }
+        correct: { type: boolean }
+        correctLabels:
+          type: array
+          items: { $ref: '#/components/schemas/OptionLabel' }
+        rationales:
+          type: object
+          description: Rationale Markdown by option label
+          additionalProperties: { type: string }
+        explanation: { type: [string, 'null'] }
+    Attempt:
+      type: object
+      required: [id, examId, config, status, startedAt, suggestedMinutes, items]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        examId: { $ref: '#/components/schemas/Uuid' }
+        config: { $ref: '#/components/schemas/SessionConfig' }
+        status: { $ref: '#/components/schemas/AttemptStatus' }
+        startedAt: { type: string, format: date-time }
+        deadlineAt: { type: string, format: date-time, description: Present on timed attempts }
+        remainingSeconds: { type: integer, minimum: 0, description: 'Present on timed attempts, computed by the server' }
+        suggestedMinutes: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AttemptItem' }
+    StartAttemptRequest:
+      type: object
+      required: [config]
+      properties:
+        config: { $ref: '#/components/schemas/SessionConfig' }
+        seed:
+          type: integer
+          minimum: 0
+          description: >
+            Seeds the draw and the shuffles (math/rand/v2 PCG); the same seed on
+            an unchanged bank repeats them. Defaults to a random uint64.
+    AttemptResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Attempt' }
+    AnswerRequest:
+      type: object
+      required: [selected, flagged]
+      properties:
+        selected:
+          type: array
+          description: Labels shown by the item; no repeats; at most chooseCount for multi
+          items: { $ref: '#/components/schemas/OptionLabel' }
+        flagged: { type: boolean }
+    AnswerResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [position, selected, flagged]
+          description: >
+            With feedback end only position, selected and flagged are returned
+            (BR-A4). With feedback each a non-empty selection also returns the
+            reveal fields.
+          properties:
+            position: { type: integer, minimum: 0 }
+            selected:
+              type: array
+              items: { $ref: '#/components/schemas/OptionLabel' }
+            flagged: { type: boolean }
+            correct: { type: boolean }
+            correctLabels:
+              type: array
+              items: { $ref: '#/components/schemas/OptionLabel' }
+            rationales:
+              type: object
+              additionalProperties: { type: string }
+            explanation: { type: [string, 'null'] }
+    AttemptResult:
+      type: object
+      required: [scorePercent, passed, correctCount, total, durationSeconds, breakdown]
+      properties:
+        scorePercent: { type: number, minimum: 0, maximum: 100 }
+        passed:
+          type: [boolean, 'null']
+          description: Set for simulation attempts only
+        correctCount: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+        durationSeconds: { type: integer, minimum: 0 }
+        breakdown:
+          type: array
+          items:
+            type: object
+            required: [classification, categories]
+            properties:
+              classification: { type: string }
+              categories:
+                type: array
+                description: Weakest first (percent ascending, then name)
+                items:
+                  type: object
+                  required: [name, correct, total, percent]
+                  properties:
+                    name: { type: string }
+                    correct: { type: integer, minimum: 0 }
+                    total: { type: integer, minimum: 0 }
+                    percent: { type: number, minimum: 0, maximum: 100 }
+    AttemptResultResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AttemptResult' }
+    ReviewItem:
+      type: object
+      required: [position, stem, type, options, selected, flagged, correct, correctLabels, rationales, explanation]
+      properties:
+        position: { type: integer, minimum: 0 }
+        stem: { type: string, description: Markdown }
+        type: { $ref: '#/components/schemas/QuestionType' }
+        options:
+          type: array
+          minItems: 2
+          maxItems: 6
+          items: { $ref: '#/components/schemas/AttemptOption' }
+        selected:
+          type: array
+          items: { $ref: '#/components/schemas/OptionLabel' }
+        flagged: { type: boolean }
+        correct: { type: boolean }
+        correctLabels:
+          type: array
+          items: { $ref: '#/components/schemas/OptionLabel' }
+        rationales:
+          type: object
+          additionalProperties: { type: string }
+        explanation: { type: [string, 'null'] }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/QuestionCategoryRef' }
+        noteId:
+          $ref: '#/components/schemas/Uuid'
+          description: The alive note of the subject that origin.noteRef points to; absent otherwise
+    ReviewListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReviewItem' }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    AttemptSummary:
+      type: object
+      required: [id, selectionKind, timingKind, feedback, status, startedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        selectionKind: { type: string, enum: [simulation, random, categories, origin-set] }
+        timingKind: { type: string, enum: [untimed, timed] }
+        feedback: { type: string, enum: [end, each] }
+        status: { $ref: '#/components/schemas/AttemptStatus' }
+        startedAt: { type: string, format: date-time }
+        durationSeconds: { type: integer, minimum: 0 }
+        scorePercent: { type: number, minimum: 0, maximum: 100 }
+        passed: { type: [boolean, 'null'] }
+    AttemptSummaryListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AttemptSummary' }
+        meta:
+          type: object
+          required: [totalItems, trend]
+          properties:
+            totalItems: { type: integer, minimum: 0 }
+            trend:
+              type: array
+              description: Closed simulation attempts only, oldest first (D-11)
+              items:
+                type: object
+                required: [at, scorePercent]
+                properties:
+                  at: { type: string, format: date-time }
+                  scorePercent: { type: number, minimum: 0, maximum: 100 }
+
     # ── Health & errors ──
     HealthResponse:
       type: object
@@ -705,10 +1754,36 @@ components:
             message: { type: string }
             details:
               type: array
-              items:
-                type: object
-                required: [field, rule, message]
-                properties:
-                  field: { type: string }
-                  rule: { type: string }
-                  message: { type: string }
+              items: { $ref: '#/components/schemas/ErrorDetail' }
+    ErrorDetail:
+      type: object
+      required: [field, rule, message]
+      properties:
+        field: { type: string }
+        rule:
+          type: string
+          description: >
+            What was violated. Spec 16 rules: required, format, min, max_length,
+            not_found, max_depth, cycle, duplicate_name, in_use, stale_version.
+            Spec 18 conflicts (409): duplicate_name, in_use, stale_version,
+            attempt_in_progress, attempt_expired, attempt_closed, answer_locked.
+            Spec 18 validation (422): range (slice 02); json, schema,
+            file_type, too_many_classifications, primary_single_valued,
+            correct_count, option_content, duplicate_key, pattern,
+            media_missing (slice 03); weights_sum, pace_pair, merge_scope
+            (slice 04); zip_entries, zip_size, zip_path, zip_layout,
+            media_type, media_size, media_dimensions (slice 05);
+            insufficient_questions, locked_by_simulation (slice 06a);
+            too_many_selected, invalid_label (slice 06b).
+        message: { type: string }
+        category:
+          type: string
+          description: insufficient_questions only; the category that is short
+        needed:
+          type: integer
+          minimum: 1
+          description: insufficient_questions only; the quota the category needs
+        available:
+          type: integer
+          minimum: 0
+          description: insufficient_questions only; the alive questions it has
