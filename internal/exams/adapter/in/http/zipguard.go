@@ -148,12 +148,16 @@ const (
 	endRecordSignature = 0x06054b50
 )
 
+// endRecordWindow is how far from the end archive/zip looks for the record
+// (the last 65*1024 bytes, trailing data included).
+const endRecordWindow = 65 * 1024
+
 // findEndRecord locates the last end-of-central-directory record, the way
-// archive/zip does (the first signature from the end, within the 64 KiB a
-// comment can occupy); ok is false when there is none (archive/zip then
+// archive/zip does (the first signature from the end, within the last
+// endRecordWindow bytes); ok is false when there is none (archive/zip then
 // reports the damage).
 func findEndRecord(data []byte) (rec endRecord, ok bool) {
-	for i := len(data) - endRecordLen; i >= 0 && i >= len(data)-endRecordLen-0xFFFF; i-- {
+	for i := len(data) - endRecordLen; i >= 0 && i >= len(data)-endRecordWindow; i-- {
 		if binary.LittleEndian.Uint32(data[i:]) == endRecordSignature {
 			return endRecord{
 				pos:    i,
