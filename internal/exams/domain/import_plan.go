@@ -315,26 +315,93 @@ func PlanImport(in PlanInput) ImportPlan {
 	}
 
 	// ── Stage 4: media ──────────────────────────────────────────────────
-	if refs, mediaErrs := scanMedia(qs); len(mediaErrs) > 0 {
-		return failedPlan(mediaErrs, MediaReport{Referenced: len(refs), Missing: refs})
+	media := resolveMedia(qs, in.Archive, in.KnownMedia)
+	if len(media.errs) > 0 {
+		return failedPlan(media.errs, media.report)
 	}
+	in.File.Questions = RewriteFileMedia(qs, media.rewrite)
 
-	return buildPlan(in, uses, reg, primaryName, hasPrimary)
+	plan := buildPlan(in, uses, reg, primaryName, hasPrimary)
+	plan.Report.Media = media.report
+	plan.Write.Media = media.uploads
+	return plan
 }
 
-// scanMedia finds every media: reference. In this slice there is no zip, so
-// each one is media_missing (BR-Q4).
-func scanMedia(qs []FileQuestion) (refs []string, errs []ImportError) {
-	seen := map[string]bool{}
-	for _, r := range MediaRefs(qs) {
-		errs = append(errs, ImportError{Path: r.Path, Rule: RuleMediaMissing,
-			Message: fmt.Sprintf("media:%s is not in this import (images arrive with a .zip, which is not accepted yet)", r.Ref)})
-		if !seen[r.Ref] {
-			seen[r.Ref] = true
-			refs = append(refs, r.Ref)
+// mediaResolution is the outcome of stage 4 (BR-Q4): the errors, the media
+// part of the report, the images to store and the rewrite of the references.
+type mediaResolution struct {
+	errs    []ImportError
+	report  MediaReport
+	uploads []MediaFile
+	hashes  map[string]string // zip path -> sha256 of its image
+}
+
+// rewrite maps a zip path to its hash; hash references and unknown targets stay.
+func (m mediaResolution) rewrite(ref string) (string, bool) {
+	sha, ok := m.hashes[ref]
+	return sha, ok
+}
+
+// resolveMedia checks every media: reference. A hash must already be stored; a
+// path must name a usable image of the zip. A missing target is reported at
+// every place that uses it; an image with a problem once, at its first use.
+func resolveMedia(qs []FileQuestion, archive *MediaArchive, known map[string]bool) mediaResolution {
+	res := mediaResolution{hashes: map[string]string{}}
+	names := map[string]bool{}
+	if archive != nil {
+		res.report.InZip = len(archive.Names)
+		for _, n := range archive.Names {
+			names[n] = true
 		}
 	}
-	return refs, errs
+	seen, reported, uploaded := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, r := range MediaRefs(qs) {
+		first := !seen[r.Ref]
+		seen[r.Ref] = true
+		if first {
+			res.report.Referenced++
+		}
+		missing := func(why string) {
+			res.errs = append(res.errs, ImportError{Path: r.Path, Rule: RuleMediaMissing, Message: fmt.Sprintf("media:%s %s", r.Ref, why)})
+			if first {
+				res.report.Missing = append(res.report.Missing, r.Ref)
+			}
+		}
+		switch {
+		case IsMediaSHA(r.Ref):
+			if !known[r.Ref] {
+				missing("is not a stored image: include the image in a .zip")
+			}
+		case names[r.Ref]:
+			file, ok := archive.Files[r.Ref]
+			switch {
+			case !ok:
+				missing("is in the zip but was not read")
+			case file.Problem != nil:
+				if !reported[r.Ref] {
+					reported[r.Ref] = true
+					res.errs = append(res.errs, ImportError{Path: r.Path, Rule: file.Problem.Rule, Message: file.Problem.Message})
+				}
+			default:
+				res.hashes[r.Ref] = file.Media.SHA256
+				if !uploaded[file.Media.SHA256] {
+					uploaded[file.Media.SHA256] = true
+					res.uploads = append(res.uploads, file)
+				}
+			}
+		case archive != nil:
+			missing("is not in the zip")
+		default:
+			missing("needs a .zip that contains the image; this import is a .json file")
+		}
+	}
+	for n := range names {
+		if !seen[n] {
+			res.report.Unused = append(res.report.Unused, n)
+		}
+	}
+	sort.Strings(res.report.Unused)
+	return res
 }
 
 func normalizedOrigin(o *Origin) *Origin {
