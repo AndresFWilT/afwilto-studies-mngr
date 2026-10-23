@@ -271,14 +271,23 @@ func PlanImport(in PlanInput) ImportPlan {
 
 	usages := make([]ClassificationUsage, len(reg))
 	for ri, rc := range reg {
-		eligible := len(qs) > 0 && bankMulti[rc.fold] == nil
+		// FR-3.1: no question lists more than one value in it. A question
+		// without a value is just unclassified (FR-3.3); the file must use
+		// the classification at least once.
+		eligible := bankMulti[rc.fold] == nil
+		used := false
 		for i := range qs {
 			cu := findUse(uses[i], rc.fold)
-			if cu == nil || len(cu.cats) != 1 {
+			if cu == nil {
+				continue
+			}
+			used = true
+			if len(cu.cats) > 1 {
 				eligible = false
 				break
 			}
 		}
+		eligible = eligible && used
 		usages[ri] = ClassificationUsage{Name: rc.name, Eligible: eligible}
 	}
 	if existingPrimary == "" && in.Primary != "" && findClass(reg, Fold(in.Primary)) == nil {
@@ -556,7 +565,7 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 		}
 	} else if len(reg) > 0 {
 		report.Warnings = append(report.Warnings,
-			"no se pudo elegir una clasificación principal: ninguna la usan todas las preguntas con un solo valor; elige una con el parámetro primary")
+			"no se pudo elegir una clasificación principal: en todas hay preguntas con más de un valor; elige una con el parámetro primary")
 	}
 
 	return ImportPlan{Report: report, Write: w}

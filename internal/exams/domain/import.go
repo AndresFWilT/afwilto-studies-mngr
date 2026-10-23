@@ -114,7 +114,7 @@ type ImportPlan struct {
 
 // ClassificationUsage describes one classification for the primary
 // resolution, in order of first appearance. Eligible means the default rule
-// may pick it: every question of the file uses it with a single value.
+// may pick it: the file uses it and no question lists more than one value in it.
 type ClassificationUsage struct {
 	Name     string
 	Eligible bool
