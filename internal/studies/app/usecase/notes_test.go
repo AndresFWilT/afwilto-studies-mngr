@@ -58,7 +58,7 @@ func newNoteEnv(t *testing.T) noteEnv {
 		list:     NewListSubjectNotesService(repo, subjects),
 		update:   NewUpdateNoteService(repo, subjects, kinds, clock),
 		delete:   NewDeleteNoteService(repo, clock),
-		delSubj:  NewDeleteSubjectService(subjects, repo, clock),
+		delSubj:  NewDeleteSubjectService(subjects, repo, testsupport.NewFakeSubjectExamCounter(), clock),
 		delKind:  NewDeleteNoteKindService(kinds, repo, clock),
 		getSubj:  NewGetSubjectService(subjects),
 		listKind: NewListNoteKindsService(kinds),

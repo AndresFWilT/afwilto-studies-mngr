@@ -126,11 +126,12 @@ func (s *updateSubjectService) Execute(ctx context.Context, id string, cmd in.Up
 type deleteSubjectService struct {
 	repo  out.SubjectRepository
 	notes out.NoteRepository
+	exams out.SubjectExamCounter
 	clock out.Clock
 }
 
-func NewDeleteSubjectService(repo out.SubjectRepository, notes out.NoteRepository, clock out.Clock) in.DeleteSubject {
-	return &deleteSubjectService{repo: repo, notes: notes, clock: clock}
+func NewDeleteSubjectService(repo out.SubjectRepository, notes out.NoteRepository, exams out.SubjectExamCounter, clock out.Clock) in.DeleteSubject {
+	return &deleteSubjectService{repo: repo, notes: notes, exams: exams, clock: clock}
 }
 
 // Execute deletes logically. Alive notes block it (BR-DEL1).

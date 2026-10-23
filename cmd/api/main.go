@@ -52,6 +52,7 @@ func main() {
 	subjects := postgres.NewSubjectRepository(pool)
 	notes := postgres.NewNoteRepository(pool)
 	tags := postgres.NewTagQuery(pool)
+	subjectExams := postgres.NewSubjectExamCounter(pool)
 
 	studiesDeps := studieshttp.RouterDeps{
 		Pinger: pool,
@@ -74,7 +75,7 @@ func main() {
 		CreateSubject: usecase.NewCreateSubjectService(subjects, categories, clock, ids),
 		GetSubject:    usecase.NewGetSubjectService(subjects),
 		UpdateSubject: usecase.NewUpdateSubjectService(subjects, categories, clock),
-		DeleteSubject: usecase.NewDeleteSubjectService(subjects, notes, clock),
+		DeleteSubject: usecase.NewDeleteSubjectService(subjects, notes, subjectExams, clock),
 
 		ListNoteKinds:  usecase.NewListNoteKindsService(noteKinds),
 		CreateNoteKind: usecase.NewCreateNoteKindService(noteKinds, clock, ids),

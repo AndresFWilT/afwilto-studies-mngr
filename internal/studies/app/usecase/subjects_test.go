@@ -18,6 +18,7 @@ type subjEnv struct {
 	list   in.ListSubjects
 	update in.UpdateSubject
 	delete in.DeleteSubject
+	exams  *testsupport.FakeSubjectExamCounter
 	addCat func(t *testing.T, name string) domain.CategoryView
 }
 
@@ -27,15 +28,17 @@ func newSubjEnv() subjEnv {
 	notes := testsupport.NewFakeNoteRepo(repo, testsupport.NewFakeNoteKindRepo())
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
+	exams := testsupport.NewFakeSubjectExamCounter()
 	createCat := NewCreateCategoryService(cats, clock, ids)
 	return subjEnv{
+		exams:  exams,
 		cats:   cats,
 		repo:   repo,
 		create: NewCreateSubjectService(repo, cats, clock, ids),
 		get:    NewGetSubjectService(repo),
 		list:   NewListSubjectsService(repo),
 		update: NewUpdateSubjectService(repo, cats, clock),
-		delete: NewDeleteSubjectService(repo, notes, clock),
+		delete: NewDeleteSubjectService(repo, notes, exams, clock),
 		addCat: func(t *testing.T, name string) domain.CategoryView {
 			t.Helper()
 			v, err := createCat.Execute(ctx, in.CreateCategoryCommand{Name: name, Color: "#22D3EE"})
@@ -196,4 +199,65 @@ func TestDeleteSubjectIsLogicalAndFreesTheName(t *testing.T) {
 		t.Fatalf("second delete = %v", err)
 	}
 	e.add(t, a.ID, "net")
+}
+
+func TestDeleteSubjectIsBlockedByAliveExams(t *testing.T) { // S02-7, BR-E3
+	e := newSubjEnv()
+	a := e.addCat(t, "A")
+	s := e.add(t, a.ID, "Net")
+	e.exams.Counts[s.ID] = 1
+
+	err := e.delete.Execute(ctx, s.ID)
+
+	wantKindConflict(t, err, domain.RuleInUse)
+	if e.repo.Rows[s.ID].DeletedAt != nil {
+		t.Fatal("a blocked delete must leave the subject alive")
+	}
+}
+
+func TestDeleteSubjectSucceedsOnceItsExamsAreGone(t *testing.T) { // S02-7
+	e := newSubjEnv()
+	a := e.addCat(t, "A")
+	s := e.add(t, a.ID, "Net")
+	e.exams.Counts[s.ID] = 2
+	if err := e.delete.Execute(ctx, s.ID); err == nil {
+		t.Fatal("delete must be blocked while exams exist")
+	}
+
+	e.exams.Counts[s.ID] = 0
+
+	if err := e.delete.Execute(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if e.repo.Rows[s.ID].DeletedAt == nil {
+		t.Fatal("row must remain with deletedAt")
+	}
+}
+
+func TestDeleteSubjectIgnoresTheExamsOfOtherSubjects(t *testing.T) { // S02-7 scoping
+	e := newSubjEnv()
+	a := e.addCat(t, "A")
+	s, other := e.add(t, a.ID, "Net"), e.add(t, a.ID, "Cloud")
+	e.exams.Counts[other.ID] = 3
+
+	if err := e.delete.Execute(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteSubjectDoesNotDeleteWhenCountingExamsFails(t *testing.T) { // an access failure is not "no exams"
+	e := newSubjEnv()
+	a := e.addCat(t, "A")
+	s := e.add(t, a.ID, "Net")
+	boom := errors.New("db down")
+	e.exams.Err = boom
+
+	err := e.delete.Execute(ctx, s.ID)
+
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the counter failure", err)
+	}
+	if e.repo.Rows[s.ID].DeletedAt != nil {
+		t.Fatal("the subject must stay alive when the check could not run")
+	}
 }

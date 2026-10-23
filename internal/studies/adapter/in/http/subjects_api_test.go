@@ -184,6 +184,25 @@ func TestDeleteSubjectAndCategoryBlockAPI(t *testing.T) { // S04-9, S04-10, S04-
 	}
 }
 
+func TestDeleteSubjectWithAliveExamsIsInUseAPI(t *testing.T) { // S02-7
+	e := newAPIEnv()
+	ti := e.createCategory(t, "TI", "")
+	s := e.createSubject(t, ti["id"].(string), "AWS")
+	spath := subjectsPath + "/" + s["id"].(string)
+	e.exams.Counts[s["id"].(string)] = 1 // an alive exam, owned by the exams context
+
+	wantError(t, e.do(t, http.MethodDelete, spath, ""), 409, "conflict", "id", "in_use")
+	if rec := e.do(t, http.MethodGet, spath, ""); rec.Code != http.StatusOK {
+		t.Fatalf("the blocked subject must remain readable, status = %d", rec.Code)
+	}
+
+	e.exams.Counts[s["id"].(string)] = 0 // the exam was deleted
+
+	if rec := e.do(t, http.MethodDelete, spath, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body %s", rec.Code, rec.Body.String())
+	}
+}
+
 // decodeList decodes a { data: [...] } list response.
 func decodeList(t *testing.T, rec *httptest.ResponseRecorder) []map[string]any {
 	t.Helper()

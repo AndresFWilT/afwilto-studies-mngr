@@ -16,6 +16,7 @@ const testMaxBodyBytes = 512
 
 type apiEnv struct {
 	router http.Handler
+	exams  *testsupport.FakeSubjectExamCounter // alive exams per subject, set by tests
 }
 
 func newAPIEnv() apiEnv {
@@ -26,7 +27,8 @@ func newAPIEnv() apiEnv {
 	tags := testsupport.FakeTagQuery{Notes: notes}
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
-	return apiEnv{router: NewRouter(RouterDeps{
+	exams := testsupport.NewFakeSubjectExamCounter()
+	return apiEnv{exams: exams, router: NewRouter(RouterDeps{
 		Pinger:         stubPinger{},
 		AllowOrigins:   []string{"http://localhost:3000"},
 		MaxBodyBytes:   testMaxBodyBytes,
@@ -48,7 +50,7 @@ func newAPIEnv() apiEnv {
 		CreateSubject: usecase.NewCreateSubjectService(subjects, categories, clock, ids),
 		GetSubject:    usecase.NewGetSubjectService(subjects),
 		UpdateSubject: usecase.NewUpdateSubjectService(subjects, categories, clock),
-		DeleteSubject: usecase.NewDeleteSubjectService(subjects, notes, clock),
+		DeleteSubject: usecase.NewDeleteSubjectService(subjects, notes, exams, clock),
 
 		ListNoteKinds:  usecase.NewListNoteKindsService(kinds),
 		CreateNoteKind: usecase.NewCreateNoteKindService(kinds, clock, ids),

@@ -732,3 +732,22 @@ func (q FakeTagQuery) List(_ context.Context) ([]domain.TagCount, error) {
 	slices.SortFunc(out, func(a, b domain.TagCount) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }
+
+// FakeSubjectExamCounter implements out.SubjectExamCounter with a settable
+// count per subject id; Err, when set, is returned by every call.
+type FakeSubjectExamCounter struct {
+	Counts map[string]int
+	Err    error
+}
+
+func NewFakeSubjectExamCounter() *FakeSubjectExamCounter {
+	return &FakeSubjectExamCounter{Counts: map[string]int{}}
+}
+
+func (c *FakeSubjectExamCounter) CountAliveExams(_ context.Context, subjectID string) (int, error) {
+	id, err := canon(subjectID)
+	if err != nil {
+		return 0, err
+	}
+	return c.Counts[id], c.Err
+}
