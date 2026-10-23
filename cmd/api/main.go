@@ -88,12 +88,20 @@ func main() {
 
 	examRepo := examspostgres.NewExamRepository(pool)
 	examSubjects := examspostgres.NewSubjectDirectory(pool)
+	questionBank := examspostgres.NewQuestionBankRepository(pool)
+	questionFiles, err := examshttp.NewQuestionFileReader() // compiles the embedded schema once
+	if err != nil {
+		slog.Error("compiling the question import schema", "err", err)
+		os.Exit(1)
+	}
 	examDeps := examshttp.Deps{
 		CreateExam:       examsusecase.NewCreateExamService(examRepo, examSubjects, clock, ids),
 		ListSubjectExams: examsusecase.NewListSubjectExamsService(examRepo, examSubjects),
 		GetExam:          examsusecase.NewGetExamService(examRepo),
 		UpdateExam:       examsusecase.NewUpdateExamService(examRepo, clock),
 		DeleteExam:       examsusecase.NewDeleteExamService(examRepo, clock),
+		ImportQuestions:  examsusecase.NewImportQuestionsService(questionBank, clock, ids),
+		FileReader:       questionFiles,
 	}
 
 	router := httpx.NewServer(httpx.Config{

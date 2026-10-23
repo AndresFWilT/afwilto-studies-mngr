@@ -77,11 +77,11 @@ type examSummaryDTO struct {
 	UpdatedAt      time.Time          `json:"updatedAt"`
 }
 
-// examDTO is the contract's Exam: the summary plus classifications, which stay
-// empty until slice 03 creates them.
+// examDTO is the contract's Exam: the summary plus classifications with their
+// categories (created by the question import).
 type examDTO struct {
 	examSummaryDTO
-	Classifications []any `json:"classifications"`
+	Classifications []classificationDTO `json:"classifications"`
 }
 
 func toExamSummaryDTO(s domain.ExamSummary) examSummaryDTO {
@@ -106,5 +106,5 @@ func toExamSummaryDTO(s domain.ExamSummary) examSummaryDTO {
 }
 
 func toExamDTO(s domain.ExamSummary) examDTO {
-	return examDTO{examSummaryDTO: toExamSummaryDTO(s), Classifications: []any{}}
+	return examDTO{examSummaryDTO: toExamSummaryDTO(s), Classifications: toClassificationDTOs(s.Classifications)}
 }

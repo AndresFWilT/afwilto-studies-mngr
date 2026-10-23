@@ -214,8 +214,8 @@ func jsonPath(instance any, tokens []string) string {
 // ── Decoding a valid document ───────────────────────────────────────────────
 
 type fileDTO struct {
-	Source    *sourceDTO    `json:"source"`
-	Questions []questionDTO `json:"questions"`
+	Source    *sourceDTO        `json:"source"`
+	Questions []fileQuestionDTO `json:"questions"`
 }
 
 type sourceDTO struct {
@@ -237,7 +237,7 @@ type originDTO struct {
 	NoteRef string `json:"noteRef"`
 }
 
-type questionDTO struct {
+type fileQuestionDTO struct {
 	Key         string            `json:"key"`
 	Type        string            `json:"type"`
 	Stem        string            `json:"stem"`
