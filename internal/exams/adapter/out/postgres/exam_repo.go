@@ -15,6 +15,7 @@ import (
 const (
 	uniqueViolation     = "23505"
 	foreignKeyViolation = "23503"
+	checkViolation      = "23514"
 )
 
 type ExamRepository struct {
@@ -34,7 +35,7 @@ func subjectNotFound() error {
 }
 
 // examWriteError maps the alive-name unique index and the subject foreign key
-// (migration 0009) to domain errors.
+// (migration 0009) and the subject guard (migration 0011) to domain errors.
 func examWriteError(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -45,6 +46,10 @@ func examWriteError(err error) error {
 		return duplicateName()
 	case foreignKeyViolation:
 		return subjectNotFound()
+	case checkViolation:
+		if pgErr.ConstraintName == "exam_subject_not_found" {
+			return subjectNotFound()
+		}
 	}
 	return err
 }

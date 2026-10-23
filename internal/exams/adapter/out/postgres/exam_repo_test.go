@@ -300,6 +300,8 @@ func TestExamsTableChecksRangesWhateverTheWriter(t *testing.T) { // BR-E2 in the
 	}
 }
 
+// Since migration 0011 the guard trigger answers first (check_violation); the
+// foreign key stays as the backstop behind it.
 func TestExamsTableRequiresAnExistingSubject(t *testing.T) {
 	e := newRepoEnv(t)
 	_ = e
@@ -308,7 +310,7 @@ func TestExamsTableRequiresAnExistingSubject(t *testing.T) {
 		VALUES ($1, $2, 'X', 65, 130, 72)`, uuid.NewString(), uuid.NewString())
 
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
-		t.Errorf("err = %v, want SQLSTATE 23503 (foreign_key_violation)", err)
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "exam_subject_not_found" {
+		t.Errorf("err = %v, want SQLSTATE 23514 exam_subject_not_found (the guard trigger)", err)
 	}
 }

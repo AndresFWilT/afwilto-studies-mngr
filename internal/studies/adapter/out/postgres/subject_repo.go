@@ -22,7 +22,7 @@ func NewSubjectRepository(pool *pgxpool.Pool) *SubjectRepository {
 }
 
 // subjectWriteError maps the alive-name unique index and the category guard
-// (migration 0005) to domain errors.
+// (migration 0005) and the dependants guards (notes 0006, exams 0011) to domain errors.
 func subjectWriteError(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -32,7 +32,7 @@ func subjectWriteError(err error) error {
 	case pgErr.Code == uniqueViolation:
 		return domain.NewConflict("name", domain.RuleDuplicateName, "a subject with this name already exists in the category")
 	case pgErr.ConstraintName == "subject_in_use":
-		return domain.NewConflict("id", domain.RuleInUse, "subject has notes; move or delete them first")
+		return domain.NewConflict("id", domain.RuleInUse, "subject is still in use; move or delete what depends on it first")
 	case pgErr.Code == foreignKeyViolation, pgErr.ConstraintName == "subject_category_not_found":
 		return domain.SingleViolation("categoryId", "not_found", "category does not exist")
 	}
