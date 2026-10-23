@@ -11,15 +11,42 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"time"
 )
 
 // DiskFileStorage writes under one directory.
 type DiskFileStorage struct{ dir string }
 
-func NewDiskFileStorage(dir string) *DiskFileStorage { return &DiskFileStorage{dir: dir} }
+// NewDiskFileStorage also removes the temp files of uploads that crashed
+// before their rename (phase-2 fix 7).
+func NewDiskFileStorage(dir string) *DiskFileStorage {
+	removeStaleUploads(dir, time.Now().Add(-staleUploadAge))
+	return &DiskFileStorage{dir: dir}
+}
+
+// staleUploadAge is how old an `.upload-*` file must be before no upload can
+// still be writing it.
+const staleUploadAge = time.Hour
+
+// removeStaleUploads deletes regular files named .upload-* under dir that were
+// last modified before cutoff. It is best effort: any failure is ignored, and
+// symlinks are neither followed nor removed.
+func removeStaleUploads(dir string, cutoff time.Time) {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() || !strings.HasPrefix(d.Name(), ".upload-") {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(path)
+		}
+		return nil
+	})
+}
 
 var shaKey = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
