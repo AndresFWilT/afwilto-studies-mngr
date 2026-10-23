@@ -2,14 +2,11 @@ package usecase
 
 import (
 	"context"
-	"errors"
 
 	"github.com/afwilto/studies-mngr/internal/exams/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/exams/app/port/out"
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
 )
-
-var errNotImplemented = errors.New("not implemented")
 
 type previewSessionService struct {
 	exams out.ExamRepository
@@ -21,7 +18,18 @@ func NewPreviewSessionService(exams out.ExamRepository, bank out.QuestionBank) i
 }
 
 func (s *previewSessionService) Execute(ctx context.Context, examID string, cfg domain.SessionConfig) (domain.SessionPreview, error) {
-	return domain.SessionPreview{}, errNotImplemented
+	exam, err := s.exams.Get(ctx, examID)
+	if err != nil {
+		return domain.SessionPreview{}, err
+	}
+	if violations := cfg.Violations(); len(violations) > 0 {
+		return domain.SessionPreview{}, domain.NewValidation(violations...)
+	}
+	bank, err := s.bank.LoadBank(ctx, examID)
+	if err != nil {
+		return domain.SessionPreview{}, err
+	}
+	return domain.PreviewSession(exam, bank, cfg)
 }
 
 type startAttemptService struct {
@@ -37,6 +45,38 @@ func NewStartAttemptService(exams out.ExamRepository, bank out.QuestionBank, att
 	return &startAttemptService{exams: exams, bank: bank, attempts: attempts, clock: clock, ids: ids, seeds: seeds}
 }
 
+// Execute orders its checks from cheapest to dearest: the exam, the config,
+// the open attempt (BR-A1), then the bank and the draw. The partial unique
+// index behind Create stays the guarantee when two starts race.
 func (s *startAttemptService) Execute(ctx context.Context, examID string, cmd in.StartAttemptCommand) (domain.AttemptView, error) {
-	return domain.AttemptView{}, errNotImplemented
+	exam, err := s.exams.Get(ctx, examID)
+	if err != nil {
+		return domain.AttemptView{}, err
+	}
+	if violations := cmd.Config.Violations(); len(violations) > 0 {
+		return domain.AttemptView{}, domain.NewValidation(violations...)
+	}
+	if open, found, err := s.attempts.FindInProgress(ctx, examID); err != nil {
+		return domain.AttemptView{}, err
+	} else if found {
+		return domain.AttemptView{}, domain.NewAttemptInProgress(open)
+	}
+	bank, err := s.bank.LoadBank(ctx, examID)
+	if err != nil {
+		return domain.AttemptView{}, err
+	}
+
+	seed := s.seeds.NewSeed()
+	if cmd.Seed != nil {
+		seed = *cmd.Seed
+	}
+	now := s.clock.Now()
+	attempt, err := domain.StartAttempt(s.ids.NewID(), exam, bank, cmd.Config, seed, now)
+	if err != nil {
+		return domain.AttemptView{}, err
+	}
+	if err := s.attempts.Create(ctx, attempt); err != nil {
+		return domain.AttemptView{}, err
+	}
+	return domain.AttemptView{Attempt: attempt, RemainingSeconds: attempt.RemainingSeconds(now)}, nil
 }

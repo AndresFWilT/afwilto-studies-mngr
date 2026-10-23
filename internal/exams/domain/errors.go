@@ -115,5 +115,5 @@ func NewConflict(field, rule, message string) *ConflictError {
 // attempt. The id travels in details[0].field = attemptId and in the message,
 // which is where the UI reads it for "Continuar simulacro".
 func NewAttemptInProgress(attemptID string) *ConflictError {
-	return &ConflictError{}
+	return NewConflict("attemptId", RuleAttemptInProgress, "attempt "+attemptID+" is in progress")
 }
