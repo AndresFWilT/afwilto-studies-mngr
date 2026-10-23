@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -403,6 +404,51 @@ func TestPatchRejectsWeightsThatSkipACategoryNamingItsId(t *testing.T) { // S04-
 	t.Errorf("details = %+v, want weights_sum naming %s", env.Error.Details, missing)
 }
 
+func TestPatchWeightsOutsideZeroTo100AreRangeErrorsNotAnOverflow(t *testing.T) { // phase-2 fix 3
+	b := newPatchAPI(t)
+
+	for name, values := range map[string][]int{
+		"3,000,000,000":           {3_000_000_000, 0, 0, 0},
+		"a sum that wraps around": {math.MaxInt64, math.MaxInt64, 102, 0},
+		"a negative weight":       {110, -10, 0, 0},
+	} {
+		rec := b.patch(t, fmt.Sprintf(`{"version":1,"weights":%s}`, b.weightsBody(t, values...)))
+
+		env := decodeError(t, rec, http.StatusUnprocessableEntity, "validation_failed")
+		if !hasDetail(env, "weights[0].percent", "range") && !hasDetail(env, "weights[1].percent", "range") {
+			t.Errorf("%s: details = %+v, want a range error on a percent", name, env.Error.Details)
+		}
+	}
+}
+
+func TestPatchPaceOutsideOneTo10000IsARangeErrorNotA500(t *testing.T) { // phase-2 fix 3
+	b := newPatchAPI(t)
+	seg := b.categoryID(t, "Dominio", "Seguridad")
+
+	for pace, field := range map[string]string{
+		`"paceQuestions":3000000000,"paceMinutes":5`:           "categories[0].paceQuestions",
+		`"paceQuestions":10,"paceMinutes":9223372036854775807`: "categories[0].paceMinutes",
+		`"paceQuestions":10001,"paceMinutes":5`:                "categories[0].paceQuestions",
+		`"paceQuestions":0,"paceMinutes":5`:                    "categories[0].paceQuestions",
+	} {
+		rec := b.patch(t, fmt.Sprintf(`{"version":1,"categories":[{"id":%q,%s}]}`, seg, pace))
+
+		wantError(t, rec, http.StatusUnprocessableEntity, "validation_failed", field, "range")
+	}
+	if rec := b.patch(t, fmt.Sprintf(`{"version":1,"categories":[{"id":%q,"paceQuestions":10000,"paceMinutes":10000}]}`, seg)); rec.Code != http.StatusOK {
+		t.Errorf("10,000 / 10,000: status %d %s, want 200", rec.Code, rec.Body)
+	}
+}
+
+func hasDetail(env errorEnvelope, field, rule string) bool {
+	for _, d := range env.Error.Details {
+		if d.Field == field && d.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPatchInferredModeReturnsTheWeightsToTheQuestionShares(t *testing.T) { // S04-4
 	b := newPatchAPI(t)
 	b.patch(t, fmt.Sprintf(`{"version":1,"weights":%s}`, b.weightsBody(t, 30, 26, 24, 20)))
@@ -429,7 +475,7 @@ func TestPatchPaceIsAPairAndNullClearsIt(t *testing.T) { // S04-5
 		return fmt.Sprintf(`{"version":%d,"categories":[{"id":%q%s}]}`, b.version(t), seg, pace)
 	}
 
-	for _, bad := range []string{`,"paceQuestions":10`, `,"paceMinutes":20`, `,"paceQuestions":10,"paceMinutes":null`, `,"paceQuestions":0,"paceMinutes":5`} {
+	for _, bad := range []string{`,"paceQuestions":10`, `,"paceMinutes":20`, `,"paceQuestions":10,"paceMinutes":null`} {
 		wantError(t, b.patch(t, body(bad)), http.StatusUnprocessableEntity, "validation_failed", "categories[0].pace", "pace_pair")
 	}
 	rec := b.patch(t, body(`,"paceQuestions":10,"paceMinutes":20`))

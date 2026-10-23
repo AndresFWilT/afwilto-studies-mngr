@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -115,7 +116,9 @@ func TestValidateManualWeights(t *testing.T) { // S04-3, BR-C3
 		{"S04-3: 99 is not 100", w("k-seg", 30, "k-cos", 26, "k-ren", 24, "k-res", 19), "weights", RuleWeightsSum, "99"},
 		{"101 is not 100", w("k-seg", 30, "k-cos", 26, "k-ren", 24, "k-res", 21), "weights", RuleWeightsSum, "101"},
 		{"S04-3: a skipped category is named", w("k-seg", 40, "k-cos", 30, "k-ren", 30), "weights", RuleWeightsSum, "k-res"},
-		{"a negative weight", w("k-seg", 110, "k-cos", -10, "k-ren", 0, "k-res", 0), "weights[1].percent", RuleWeightsSum, "-10"},
+		{"a negative weight", w("k-seg", 110, "k-cos", -10, "k-ren", 0, "k-res", 0), "weights[1].percent", RuleRange, "-10"},
+		{"a weight above 100", w("k-seg", 101, "k-cos", 0, "k-ren", 0, "k-res", 0), "weights[0].percent", RuleRange, "101"},
+		{"a weight of 3,000,000,000", w("k-seg", 3_000_000_000, "k-cos", 0, "k-ren", 0, "k-res", 0), "weights[0].percent", RuleRange, "3000000000"},
 		{"an unknown category", w("k-seg", 50, "k-cos", 50, "k-ren", 0, "k-res", 0, "k-zzz", 0), "weights[4].categoryId", RuleNotFound, "k-zzz"},
 		{"a category listed twice", w("k-seg", 50, "k-seg", 50, "k-cos", 0, "k-ren", 0, "k-res", 0), "weights[1].categoryId", "format", "k-seg"},
 		{"nothing at all", nil, "weights", RuleWeightsSum, "k-seg"},
@@ -137,5 +140,37 @@ func TestValidateManualWeights(t *testing.T) { // S04-3, BR-C3
 			}
 			t.Errorf("violations = %+v, want %s/%s mentioning %q", got, tc.wantField, tc.wantRule, tc.wantMessage)
 		})
+	}
+}
+
+func TestManualWeightsThatWrapAroundTo100AreRangeErrorsNotAccepted(t *testing.T) { // phase-2 fix 3
+	primary := []Category{{ID: "k-seg"}, {ID: "k-cos"}, {ID: "k-ren"}, {ID: "k-res"}}
+	// the old code added the percents as they came: MaxInt64 + MaxInt64 + 102 wraps to 100 (mod 2^64)
+	wrapped := []WeightInput{
+		{CategoryID: "k-seg", Percent: math.MaxInt64}, {CategoryID: "k-cos", Percent: math.MaxInt64},
+		{CategoryID: "k-ren", Percent: 102}, {CategoryID: "k-res", Percent: 0},
+	}
+
+	got := ValidateManualWeights(primary, wrapped)
+
+	fields := map[string]bool{}
+	for _, v := range got {
+		if v.Rule != RuleRange {
+			t.Errorf("violation %+v, want only range errors", v)
+		}
+		fields[v.Field] = true
+	}
+	if !fields["weights[0].percent"] || !fields["weights[1].percent"] || !fields["weights[2].percent"] || len(got) != 3 {
+		t.Errorf("violations = %+v, want range at weights[0], weights[1] and weights[2] (102 is above 100 too)", got)
+	}
+}
+
+func TestManualWeightsAtTheEdgesOfTheRangeAreAccepted(t *testing.T) { // phase-2 fix 3 boundary
+	primary := []Category{{ID: "k-seg"}, {ID: "k-cos"}}
+
+	got := ValidateManualWeights(primary, []WeightInput{{CategoryID: "k-seg", Percent: 100}, {CategoryID: "k-cos", Percent: 0}})
+
+	if len(got) != 0 {
+		t.Errorf("violations = %+v, want none", got)
 	}
 }

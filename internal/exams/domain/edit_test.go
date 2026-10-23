@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -225,8 +226,6 @@ func TestPlanExamEditPacePair(t *testing.T) { // S04-5, BR-C4
 		{"S04-5: questions without minutes", pace(true, ptr(10), false, nil), RulePacePair, [2]*int{}, false},
 		{"minutes without questions", pace(false, nil, true, ptr(20)), RulePacePair, [2]*int{}, false},
 		{"one value and one null", pace(true, ptr(10), true, nil), RulePacePair, [2]*int{}, false},
-		{"zero questions", pace(true, ptr(0), true, ptr(20)), RulePacePair, [2]*int{}, false},
-		{"zero minutes", pace(true, ptr(10), true, ptr(0)), RulePacePair, [2]*int{}, false},
 		{"both null clears the pair", pace(true, nil, true, nil), "", [2]*int{nil, nil}, true},
 		{"neither sent leaves the pair", pace(false, nil, false, nil), "", [2]*int{}, false},
 	}
@@ -251,6 +250,40 @@ func TestPlanExamEditPacePair(t *testing.T) { // S04-5, BR-C4
 			if touched && (!equalPtr(c.PaceQuestions, tc.wantPace[0]) || !equalPtr(c.PaceMinutes, tc.wantPace[1])) {
 				t.Errorf("pace = %v/%v, want %v/%v", deref2(c.PaceQuestions), deref2(c.PaceMinutes), deref2(tc.wantPace[0]), deref2(tc.wantPace[1]))
 			}
+		})
+	}
+}
+
+func TestPlanExamEditPaceIsRangeCheckedFrom1To10000(t *testing.T) { // phase-2 fix 3
+	pace := func(q, m int) StructureEdit {
+		return StructureEdit{Categories: []CategoryEdit{{ID: "k-seg", Pace: PaceEdit{QuestionsSet: true, Questions: ptr(q), MinutesSet: true, Minutes: ptr(m)}}}}
+	}
+	cases := []struct {
+		name  string
+		st    StructureEdit
+		field string // "" means accepted
+	}{
+		{"1 and 1 are the lower edge", pace(1, 1), ""},
+		{"10,000 and 10,000 are the upper edge", pace(10_000, 10_000), ""},
+		{"zero questions", pace(0, 20), "categories[0].paceQuestions"},
+		{"zero minutes", pace(10, 0), "categories[0].paceMinutes"},
+		{"negative questions", pace(-5, 20), "categories[0].paceQuestions"},
+		{"10,001 questions", pace(10_001, 20), "categories[0].paceQuestions"},
+		{"10,001 minutes", pace(10, 10_001), "categories[0].paceMinutes"},
+		{"3,000,000,000 questions", pace(3_000_000_000, 20), "categories[0].paceQuestions"},
+		{"MaxInt64 minutes", pace(10, math.MaxInt64), "categories[0].paceMinutes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := planEdit(bkBank(), ExamEdit{}, tc.st)
+
+			if tc.field == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want accepted", err)
+				}
+				return
+			}
+			mustViolate(t, err, tc.field, RuleRange)
 		})
 	}
 }
