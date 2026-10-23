@@ -97,8 +97,15 @@ func (a Attempt) Close(status AttemptStatus, at time.Time) Attempt {
 	return closed
 }
 
-// Submit closes the attempt as submitted.
-func (a Attempt) Submit(now time.Time) Attempt { return a.Close(AttemptSubmitted, now) }
+// Submit closes the attempt as submitted. A timed attempt submitted inside the
+// grace period past its deadline is closed at the deadline, so its duration
+// never exceeds the time limit.
+func (a Attempt) Submit(now time.Time) Attempt {
+	if a.DeadlineAt != nil && now.After(*a.DeadlineAt) {
+		now = *a.DeadlineAt
+	}
+	return a.Close(AttemptSubmitted, now)
+}
 
 // Expire closes the attempt as expired at its deadline, however late the
 // request that found it: the duration is the time the taker had.
