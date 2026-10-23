@@ -34,13 +34,18 @@ type Deps struct {
 	// GetMedia; the export needs both, because it streams the images it holds.
 	GetMedia        in.GetMedia
 	ExportQuestions in.ExportQuestions
+
+	// Slice 06a: the session preview and the attempt start. Each route exists
+	// when its use case is wired.
+	PreviewSession in.PreviewSession
+	StartAttempt   in.StartAttempt
 }
 
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02),
 // the question import (slice 03), the bank browser, question and merge
-// endpoints (slice 04) and the media and export endpoints (slice 05), each
-// when its dependencies are wired. The other documented endpoints answer the
-// JSON 404 until slices 06a–06b.
+// endpoints (slice 04), the media and export endpoints (slice 05) and the
+// session preview and attempt start (slice 06a), each when its dependencies
+// are wired. The other documented endpoints answer the JSON 404 until 06b.
 func Register(deps Deps) func(*http.ServeMux) {
 	return func(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/v1/subjects/{id}/exams", handleListSubjectExams(deps.ListSubjectExams))
@@ -68,6 +73,12 @@ func Register(deps Deps) func(*http.ServeMux) {
 		}
 		if deps.MergeCategories != nil {
 			mux.HandleFunc("POST /api/v1/exams/{id}/categories/merge", handleMergeCategories(deps.MergeCategories))
+		}
+		if deps.PreviewSession != nil {
+			mux.HandleFunc("POST /api/v1/exams/{id}/sessions/preview", handlePreviewSession(deps.PreviewSession))
+		}
+		if deps.StartAttempt != nil {
+			mux.HandleFunc("POST /api/v1/exams/{id}/attempts", handleStartAttempt(deps.StartAttempt))
 		}
 	}
 }
