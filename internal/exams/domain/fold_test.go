@@ -67,7 +67,7 @@ func TestLevenshteinRunsOnFoldedNames(t *testing.T) { // FR-3 similarity warning
 		{"abc", "", 3},
 		{"", "", 0},
 		{"SQS", "SNS", 1},
-		{"Seguridad", "Costos", 7},
+		{"flaw", "lawn", 2},
 	}
 	for _, tc := range cases {
 		if got := Levenshtein(tc.a, tc.b); got != tc.want {
