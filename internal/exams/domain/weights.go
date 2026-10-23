@@ -50,9 +50,9 @@ func ValidateManualWeights(primary []Category, weights []WeightInput) []Violatio
 		case listed[w.CategoryID]:
 			out = append(out, Violation{Field: field + ".categoryId", Rule: "format",
 				Message: fmt.Sprintf("category %s is listed more than once", w.CategoryID)})
-		case w.Percent < 0:
-			out = append(out, Violation{Field: field + ".percent", Rule: RuleWeightsSum,
-				Message: fmt.Sprintf("a weight is an integer >= 0, got %d", w.Percent)})
+		case w.Percent < 0 || w.Percent > 100:
+			out = append(out, Violation{Field: field + ".percent", Rule: RuleRange,
+				Message: fmt.Sprintf("a weight is a whole number from 0 to 100, got %d", w.Percent)})
 		default:
 			sum += w.Percent
 		}

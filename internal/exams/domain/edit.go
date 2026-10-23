@@ -297,6 +297,12 @@ func PlanExamEdit(exam Exam, bank Bank, expectedVersion int, edit ExamEdit, st S
 	return write, nil
 }
 
+// Pace bounds of a category (BR-C4): each side is a whole number in this range.
+const (
+	minPace = 1
+	maxPace = 10_000
+)
+
 // applyPace sets the pace pair of k, or reports pace_pair (BR-C4): both sides
 // sent, as two integers >= 1 or as two nulls.
 func applyPace(k *Category, p PaceEdit, field string) *Violation {
@@ -306,8 +312,15 @@ func applyPace(k *Category, p PaceEdit, field string) *Violation {
 		return bad("paceQuestions and paceMinutes are set together: send both, or both as null")
 	case (p.Questions == nil) != (p.Minutes == nil):
 		return bad("paceQuestions and paceMinutes are both numbers or both null")
-	case p.Questions != nil && (*p.Questions < 1 || *p.Minutes < 1):
-		return bad("paceQuestions and paceMinutes must each be at least 1")
+	}
+	for _, side := range []struct {
+		name  string
+		value *int
+	}{{"paceQuestions", p.Questions}, {"paceMinutes", p.Minutes}} {
+		if side.value != nil && (*side.value < minPace || *side.value > maxPace) {
+			return &Violation{Field: strings.TrimSuffix(field, ".pace") + "." + side.name, Rule: RuleRange,
+				Message: fmt.Sprintf("%s must be a whole number from %d to %d, got %d", side.name, minPace, maxPace, *side.value)}
+		}
 	}
 	k.PaceQuestions, k.PaceMinutes = p.Questions, p.Minutes
 	return nil
