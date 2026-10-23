@@ -150,6 +150,72 @@ func TestFeedbackEndNeverRevealsCorrectnessInAnyResponseWhileOpen(t *testing.T) 
 	}
 }
 
+// assertNoKeyLeak fails when the body of an open feedback=end attempt has a key
+// that names correctness, a rationale or an explanation, or text of them.
+func assertNoKeyLeak(t *testing.T, label string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	var doc any
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("%s: %v (%s)", label, err, rec.Body)
+	}
+	seen := 0
+	walkKeys(doc, func(key string) {
+		seen++
+		lower := strings.ToLower(key)
+		for _, banned := range []string{"correct", "rationale", "explanation"} {
+			if strings.Contains(lower, banned) {
+				t.Errorf("%s has the key %q while the attempt is open and feedback is end", label, key)
+			}
+		}
+	})
+	if seen < 2 {
+		t.Errorf("%s: the walk saw %d keys", label, seen)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "why ") || strings.Contains(body, "explanation of") {
+		t.Errorf("%s leaks rationale or explanation text: %.200s", label, body)
+	}
+}
+
+func TestFeedbackEndLeaksNothingInErrorBodiesReviewWhileOpenHistoryOrExamDetail(t *testing.T) { // AC-18, phase-3 fix 7
+	a := newAttemptsAPI(t)
+	start := a.mustStart(t, timedEnd, "")
+	id := start["id"].(string)
+	items := itemsOf(t, start)
+	a.mustAnswer(t, id, 0, false, keyOf(t, items[0]))
+
+	open := map[string]struct {
+		rec  *httptest.ResponseRecorder
+		want int
+	}{
+		"422 invalid_label":       {a.answer(t, id, 0, false, "Z"), http.StatusUnprocessableEntity},
+		"422 too_many_selected":   {a.answer(t, id, 1, false, "A", "B", "C"), http.StatusUnprocessableEntity},
+		"404 unknown position":    {a.answer(t, id, 99, false, "A"), http.StatusNotFound},
+		"422 malformed body":      {a.put(t, id, 0, `{"selected":"A"}`), http.StatusUnprocessableEntity},
+		"409 start while open":    {a.start(t, untimedEnd, ""), http.StatusConflict},
+		"409 review while open":   {a.review(t, id), http.StatusConflict},
+		"200 history while open":  {a.history(t), http.StatusOK},
+		"200 exam detail":         {a.do(t, http.MethodGet, examPath(a.examID), ""), http.StatusOK},
+		"200 start-state preview": {a.do(t, http.MethodPost, a.previewPath(), `{"config":`+untimedEnd+`}`), http.StatusOK},
+	}
+	for label, c := range open {
+		if c.rec.Code != c.want {
+			t.Errorf("%s: status %d, want %d (body %.200s)", label, c.rec.Code, c.want, c.rec.Body)
+			continue
+		}
+		assertNoKeyLeak(t, label, c.rec)
+	}
+
+	// Errors of a closed attempt (the 409s of a late write and of a second submit) carry no answer key either.
+	a.at(10*time.Minute + 6*time.Second)
+	expired := a.answer(t, id, 2, false, "A")
+	closed := a.submit(t, id)
+	if expired.Code != http.StatusConflict || closed.Code != http.StatusConflict {
+		t.Fatalf("late PUT %d, submit after expiry %d; want 409 and 409", expired.Code, closed.Code)
+	}
+	assertNoKeyLeak(t, "409 attempt_expired", expired)
+	assertNoKeyLeak(t, "409 attempt_closed", closed)
+}
+
 func TestPutWithFeedbackEndReturnsExactlyPositionSelectedFlaggedAndTheClock(t *testing.T) { // AC-18, decision 2
 	a := newAttemptsAPI(t)
 	timed := a.mustStart(t, timedEnd, "")
