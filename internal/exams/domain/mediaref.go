@@ -124,3 +124,14 @@ func MediaExtension(contentType string) (string, bool) {
 	}
 	return "", false
 }
+
+// QuestionExport is what the export endpoint needs (FR-5): the alive
+// questions of an exam in stored form, and the stored images they use, by hash.
+type QuestionExport struct {
+	Questions []Question
+	Media     map[string]Media
+}
+
+// QuestionMediaHashes lists the distinct hashes the stored questions
+// reference, in order of first use.
+func QuestionMediaHashes(qs []Question) []string { return nil }

@@ -16,6 +16,9 @@ type ImportQuestionsCommand struct {
 	Primary    string
 	File       *domain.QuestionFile
 	FileErrors []domain.ImportError
+	// Archive is what the .zip the file came in contributes (entry names and
+	// the inspected images the questions reference); nil for a .json import.
+	Archive *domain.MediaArchive
 }
 
 // ImportQuestions runs the rest of the pipeline and, unless DryRun, applies the

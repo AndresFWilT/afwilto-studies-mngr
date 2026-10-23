@@ -162,3 +162,17 @@ func TestMediaExtensionMapsTheThreeStoredTypes(t *testing.T) { // FR-6
 		t.Error("svg has an extension")
 	}
 }
+
+func TestQuestionMediaHashesListsEachStoredHashOnceInOrderOfFirstUse(t *testing.T) { // export: which files to put in img/
+	a := Question{Stem: "![x](media:" + shaB + ") and ![y](media:" + shaA + ")", Options: []Option{{Image: "media:" + shaA, Alt: "a"}, {Text: "plain"}}}
+	b := Question{Explanation: "![z](media:" + shaB + ")", Options: []Option{{Text: "t", Rationale: "social media: no"}}}
+
+	got := QuestionMediaHashes([]Question{a, b})
+
+	if want := []string{shaB, shaA}; !slices.Equal(got, want) {
+		t.Errorf("QuestionMediaHashes = %v, want %v", got, want)
+	}
+	if len(QuestionMediaHashes(nil)) != 0 {
+		t.Error("no questions, no hashes")
+	}
+}

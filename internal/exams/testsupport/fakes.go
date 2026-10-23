@@ -182,7 +182,11 @@ type FakeQuestionBank struct {
 	// edits, merges and question deletes.
 	Applied int
 	Edits   int
+	media   *FakeMedia
 }
+
+// AttachMedia makes applied import writes register their image rows.
+func (b *FakeQuestionBank) AttachMedia(m *FakeMedia) { b.media = m }
 
 // NewFakeQuestionBank wires the bank to the exam repository, which then reads
 // question totals and classifications from it.
@@ -226,6 +230,9 @@ func (b *FakeQuestionBank) ApplyImport(ctx context.Context, examID string, plan 
 	}
 	b.banks[examID] = current.After(*write)
 	b.Applied++
+	if b.media != nil {
+		b.media.Register(write.Media)
+	}
 	return nil
 }
 

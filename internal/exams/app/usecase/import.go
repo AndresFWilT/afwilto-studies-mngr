@@ -10,13 +10,28 @@ import (
 )
 
 type importQuestionsService struct {
-	bank  out.QuestionBank
-	clock out.Clock
-	ids   out.IDGenerator
+	bank    out.QuestionBank
+	clock   out.Clock
+	ids     out.IDGenerator
+	index   out.MediaIndex
+	storage out.MediaStorage
 }
 
-func NewImportQuestionsService(bank out.QuestionBank, clock out.Clock, ids out.IDGenerator) in.ImportQuestions {
-	return &importQuestionsService{bank: bank, clock: clock, ids: ids}
+// ImportOption wires an optional collaborator of the import.
+type ImportOption func(*importQuestionsService)
+
+// WithMedia lets the import resolve stored hashes (media:<sha256>) and store
+// the images of a zip.
+func WithMedia(index out.MediaIndex, storage out.MediaStorage) ImportOption {
+	return func(s *importQuestionsService) { s.index, s.storage = index, storage }
+}
+
+func NewImportQuestionsService(bank out.QuestionBank, clock out.Clock, ids out.IDGenerator, opts ...ImportOption) in.ImportQuestions {
+	s := &importQuestionsService{bank: bank, clock: clock, ids: ids}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Execute runs stages 3 to 5 of the import pipeline (slice 03 §1.3). A dry run
