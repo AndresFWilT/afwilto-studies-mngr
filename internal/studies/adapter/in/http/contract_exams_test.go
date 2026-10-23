@@ -23,10 +23,26 @@ func operationOf(doc *openapi3.T, method, path string) *openapi3.Operation {
 	return item.GetOperation(method)
 }
 
-func TestContractIsV020(t *testing.T) { // S01-1
+func TestContractIsV030(t *testing.T) { // S01-1, slice 06b decision 5
 	doc, _ := loadContract(t)
-	if got := doc.Info.Version; got != "0.2.0" {
-		t.Errorf("info.version = %q, want 0.2.0", got)
+	if got := doc.Info.Version; got != "0.3.0" {
+		t.Errorf("info.version = %q, want 0.3.0", got)
+	}
+}
+
+func TestContractCarriesTheSlice06bAdditions(t *testing.T) { // slice 06b decisions 1 and 2
+	doc, _ := loadContract(t)
+	attempt := doc.Components.Schemas["Attempt"]
+	if attempt == nil || attempt.Value.Properties["result"] == nil {
+		t.Error("Attempt has no optional result property")
+	} else if slices.Contains(attempt.Value.Required, "result") {
+		t.Error("Attempt.result must be optional: only a closed attempt carries it")
+	}
+	answer := doc.Components.Schemas["AnswerResponse"]
+	if answer == nil || answer.Value.Properties["data"].Value.Properties["remainingSeconds"] == nil {
+		t.Error("AnswerResponse.data has no remainingSeconds property")
+	} else if slices.Contains(answer.Value.Properties["data"].Value.Required, "remainingSeconds") {
+		t.Error("AnswerResponse.data.remainingSeconds must be optional: untimed attempts omit it")
 	}
 }
 

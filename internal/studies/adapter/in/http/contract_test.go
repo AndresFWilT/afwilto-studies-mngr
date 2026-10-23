@@ -124,8 +124,8 @@ func TestContractDocumentsEveryEndpoint(t *testing.T) {
 			t.Errorf("contract is missing %s", endpoint)
 		}
 	}
-	if got := doc.Info.Version; got != "0.2.0" {
-		t.Errorf("info.version = %q, want 0.2.0", got)
+	if got := doc.Info.Version; got != "0.3.0" {
+		t.Errorf("info.version = %q, want 0.3.0", got)
 	}
 }
 
