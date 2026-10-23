@@ -3,13 +3,14 @@ package http
 import (
 	"net/http"
 
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/studies/domain"
 )
 
 func handleListSubjectNotes(list in.ListSubjectNotes) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -33,18 +34,18 @@ func handleListSubjectNotes(list in.ListSubjectNotes) http.HandlerFunc {
 		for i, v := range views {
 			dtos[i] = toNoteSummaryDTO(v)
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }
 
 func handleCreateNote(create in.CreateNote) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		subjectID, ok := pathID(w, r)
+		subjectID, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
 		var req createNoteRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		kindID, err := requiredUUIDField("kindId", req.KindID)
@@ -61,13 +62,13 @@ func handleCreateNote(create in.CreateNote) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Location", "/api/v1/notes/"+view.ID)
-		writeData(w, http.StatusCreated, toNoteDTO(view))
+		httpx.WriteData(w, http.StatusCreated, toNoteDTO(view))
 	}
 }
 
 func handleGetNote(get in.GetNote) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -76,18 +77,18 @@ func handleGetNote(get in.GetNote) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toNoteDTO(view))
+		httpx.WriteData(w, http.StatusOK, toNoteDTO(view))
 	}
 }
 
 func handleUpdateNote(update in.UpdateNote) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
 		var req updateNoteRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		if req.Version == nil {
@@ -117,13 +118,13 @@ func handleUpdateNote(update in.UpdateNote) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toNoteDTO(view))
+		httpx.WriteData(w, http.StatusOK, toNoteDTO(view))
 	}
 }
 
 func handleDeleteNote(del in.DeleteNote) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -161,7 +162,7 @@ func handleListNotesByTag(list in.ListNotesByTag) http.HandlerFunc {
 		for i, v := range views {
 			dtos[i] = toNoteSummaryDTO(v)
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }
 
@@ -176,6 +177,6 @@ func handleListTags(list in.ListTags) http.HandlerFunc {
 		for i, c := range counts {
 			dtos[i] = tagDTO{Name: c.Name, Count: c.Count}
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }

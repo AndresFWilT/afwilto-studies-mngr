@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/studies/domain"
 )
@@ -18,14 +19,14 @@ func handleListCategories(list in.ListCategories) http.HandlerFunc {
 		for i, v := range views {
 			dtos[i] = toCategoryDTO(v)
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }
 
 func handleCreateCategory(create in.CreateCategory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createCategoryRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		parentID, err := uuidField("parentId", req.ParentID)
@@ -41,13 +42,13 @@ func handleCreateCategory(create in.CreateCategory) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Location", "/api/v1/categories/"+view.ID)
-		writeData(w, http.StatusCreated, toCategoryDTO(view))
+		httpx.WriteData(w, http.StatusCreated, toCategoryDTO(view))
 	}
 }
 
 func handleGetCategory(get in.GetCategory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -56,18 +57,18 @@ func handleGetCategory(get in.GetCategory) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toCategoryDTO(view))
+		httpx.WriteData(w, http.StatusOK, toCategoryDTO(view))
 	}
 }
 
 func handleUpdateCategory(update in.UpdateCategory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
 		var req updateCategoryRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		if !req.Name.Set && !req.Color.Set && !req.ParentID.Set {
@@ -86,13 +87,13 @@ func handleUpdateCategory(update in.UpdateCategory) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toCategoryDTO(view))
+		httpx.WriteData(w, http.StatusOK, toCategoryDTO(view))
 	}
 }
 
 func handleDeleteCategory(del in.DeleteCategory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}

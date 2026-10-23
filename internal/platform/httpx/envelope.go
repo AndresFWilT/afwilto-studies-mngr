@@ -1,4 +1,4 @@
-package http
+package httpx
 
 import (
 	"encoding/json"
@@ -6,19 +6,21 @@ import (
 	"net/http"
 )
 
-type errorBody struct {
+// ErrorBody is the payload under "error" in every failure response.
+type ErrorBody struct {
 	Code    string        `json:"code"`
 	Message string        `json:"message"`
-	Details []errorDetail `json:"details,omitempty"`
+	Details []ErrorDetail `json:"details,omitempty"`
 }
 
-type errorDetail struct {
+// ErrorDetail pinpoints one violated rule on one field.
+type ErrorDetail struct {
 	Field   string `json:"field"`
 	Rule    string `json:"rule"`
 	Message string `json:"message"`
 }
 
-func writeData(w http.ResponseWriter, status int, data any) {
+func WriteData(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(map[string]any{"data": data}); err != nil {
@@ -26,7 +28,7 @@ func writeData(w http.ResponseWriter, status int, data any) {
 	}
 }
 
-func writeList(w http.ResponseWriter, status int, data any, meta any) {
+func WriteList(w http.ResponseWriter, status int, data any, meta any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(map[string]any{"data": data, "meta": meta}); err != nil {
@@ -34,10 +36,15 @@ func writeList(w http.ResponseWriter, status int, data any, meta any) {
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, body errorBody) {
+func WriteError(w http.ResponseWriter, status int, body ErrorBody) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(map[string]any{"error": body}); err != nil {
 		slog.Error("encoding error response", "err", err)
 	}
+}
+
+// NotFound answers the 404 envelope used for unknown and deleted resources.
+func NotFound(w http.ResponseWriter) {
+	WriteError(w, http.StatusNotFound, ErrorBody{Code: "not_found", Message: "resource not found"})
 }

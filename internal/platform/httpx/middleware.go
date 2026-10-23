@@ -1,4 +1,4 @@
-package http
+package httpx
 
 import (
 	"crypto/rand"
@@ -19,7 +19,8 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-func requestLogMiddleware(next http.Handler) http.Handler {
+// RequestLog logs one structured line per request.
+func RequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -42,12 +43,13 @@ func requestID() string {
 	return hex.EncodeToString(b)
 }
 
-func recoverMiddleware(next http.Handler) http.Handler {
+// Recover turns a panic into the 500 envelope.
+func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("panic recovered", "panic", rec, "path", r.URL.Path)
-				writeError(w, http.StatusInternalServerError, errorBody{
+				WriteError(w, http.StatusInternalServerError, ErrorBody{
 					Code:    "internal",
 					Message: "internal server error",
 				})
@@ -57,7 +59,8 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func corsMiddleware(allowOrigins []string, next http.Handler) http.Handler {
+// CORS allows the listed origins and answers preflights.
+func CORS(allowOrigins []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" && slices.Contains(allowOrigins, origin) {
@@ -74,12 +77,12 @@ func corsMiddleware(allowOrigins []string, next http.Handler) http.Handler {
 	})
 }
 
-// bodyLimitMiddleware caps every request body; reads past the cap fail with
+// BodyLimit caps every request body; reads past the cap fail with
 // *http.MaxBytesError, which the JSON decoder maps to 413 payload_too_large.
-func bodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
+func BodyLimit(maxBytes int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if carriesBody(r.Method) && r.ContentLength > maxBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, errorBody{
+			WriteError(w, http.StatusRequestEntityTooLarge, ErrorBody{
 				Code:    "payload_too_large",
 				Message: "request body is too large",
 			})
@@ -96,9 +99,9 @@ func carriesBody(method string) bool {
 	return method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut
 }
 
-// jsonFallback keeps ServeMux's routing decisions but replaces its plain-text
+// JSONFallback keeps ServeMux's routing decisions but replaces its plain-text
 // 404/405 bodies with the API's JSON error envelope (Spec 16 §7).
-func jsonFallback(mux *http.ServeMux) http.Handler {
+func JSONFallback(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, pattern := mux.Handler(r); pattern != "" {
 			mux.ServeHTTP(w, r)
@@ -108,13 +111,13 @@ func jsonFallback(mux *http.ServeMux) http.Handler {
 		mux.ServeHTTP(probe, r)
 		if probe.status == http.StatusMethodNotAllowed {
 			w.Header().Set("Allow", probe.header.Get("Allow"))
-			writeError(w, http.StatusMethodNotAllowed, errorBody{
+			WriteError(w, http.StatusMethodNotAllowed, ErrorBody{
 				Code:    "method_not_allowed",
 				Message: "method " + r.Method + " is not allowed on " + r.URL.Path,
 			})
 			return
 		}
-		writeError(w, http.StatusNotFound, errorBody{
+		WriteError(w, http.StatusNotFound, ErrorBody{
 			Code:    "not_found",
 			Message: "no route for " + r.Method + " " + r.URL.Path,
 		})

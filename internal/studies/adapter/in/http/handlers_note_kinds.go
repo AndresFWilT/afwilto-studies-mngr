@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 )
 
@@ -17,14 +18,14 @@ func handleListNoteKinds(list in.ListNoteKinds) http.HandlerFunc {
 		for i, v := range views {
 			dtos[i] = toNoteKindDTO(v)
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }
 
 func handleCreateNoteKind(create in.CreateNoteKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req noteKindRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		view, err := create.Execute(r.Context(), in.CreateNoteKindCommand{Name: req.Name})
@@ -33,13 +34,13 @@ func handleCreateNoteKind(create in.CreateNoteKind) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Location", "/api/v1/note-kinds/"+view.ID)
-		writeData(w, http.StatusCreated, toNoteKindDTO(view))
+		httpx.WriteData(w, http.StatusCreated, toNoteKindDTO(view))
 	}
 }
 
 func handleGetNoteKind(get in.GetNoteKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -48,18 +49,18 @@ func handleGetNoteKind(get in.GetNoteKind) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toNoteKindDTO(view))
+		httpx.WriteData(w, http.StatusOK, toNoteKindDTO(view))
 	}
 }
 
 func handleRenameNoteKind(rename in.RenameNoteKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
 		var req noteKindRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		view, err := rename.Execute(r.Context(), id, in.RenameNoteKindCommand{Name: req.Name})
@@ -67,13 +68,13 @@ func handleRenameNoteKind(rename in.RenameNoteKind) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toNoteKindDTO(view))
+		httpx.WriteData(w, http.StatusOK, toNoteKindDTO(view))
 	}
 }
 
 func handleDeleteNoteKind(del in.DeleteNoteKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}

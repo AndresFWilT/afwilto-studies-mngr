@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 )
 
@@ -40,44 +41,45 @@ type RouterDeps struct {
 	DeleteNoteKind in.DeleteNoteKind
 }
 
-func NewRouter(deps RouterDeps) http.Handler {
-	mux := http.NewServeMux()
+// Register adds the studies routes to the shared mux.
+func Register(deps RouterDeps) func(*http.ServeMux) {
+	return func(mux *http.ServeMux) {
+		mux.HandleFunc("GET /healthz", handleHealthz())
+		mux.HandleFunc("GET /readyz", handleReadyz(deps.Pinger))
 
-	mux.HandleFunc("GET /healthz", handleHealthz())
-	mux.HandleFunc("GET /readyz", handleReadyz(deps.Pinger))
+		mux.HandleFunc("GET /api/v1/categories", handleListCategories(deps.ListCategories))
+		mux.HandleFunc("POST /api/v1/categories", handleCreateCategory(deps.CreateCategory))
+		mux.HandleFunc("GET /api/v1/categories/{id}", handleGetCategory(deps.GetCategory))
+		mux.HandleFunc("PATCH /api/v1/categories/{id}", handleUpdateCategory(deps.UpdateCategory))
+		mux.HandleFunc("DELETE /api/v1/categories/{id}", handleDeleteCategory(deps.DeleteCategory))
 
-	mux.HandleFunc("GET /api/v1/categories", handleListCategories(deps.ListCategories))
-	mux.HandleFunc("POST /api/v1/categories", handleCreateCategory(deps.CreateCategory))
-	mux.HandleFunc("GET /api/v1/categories/{id}", handleGetCategory(deps.GetCategory))
-	mux.HandleFunc("PATCH /api/v1/categories/{id}", handleUpdateCategory(deps.UpdateCategory))
-	mux.HandleFunc("DELETE /api/v1/categories/{id}", handleDeleteCategory(deps.DeleteCategory))
+		mux.HandleFunc("GET /api/v1/note-kinds", handleListNoteKinds(deps.ListNoteKinds))
+		mux.HandleFunc("POST /api/v1/note-kinds", handleCreateNoteKind(deps.CreateNoteKind))
+		mux.HandleFunc("GET /api/v1/note-kinds/{id}", handleGetNoteKind(deps.GetNoteKind))
+		mux.HandleFunc("PATCH /api/v1/note-kinds/{id}", handleRenameNoteKind(deps.RenameNoteKind))
+		mux.HandleFunc("DELETE /api/v1/note-kinds/{id}", handleDeleteNoteKind(deps.DeleteNoteKind))
 
-	mux.HandleFunc("GET /api/v1/note-kinds", handleListNoteKinds(deps.ListNoteKinds))
-	mux.HandleFunc("POST /api/v1/note-kinds", handleCreateNoteKind(deps.CreateNoteKind))
-	mux.HandleFunc("GET /api/v1/note-kinds/{id}", handleGetNoteKind(deps.GetNoteKind))
-	mux.HandleFunc("PATCH /api/v1/note-kinds/{id}", handleRenameNoteKind(deps.RenameNoteKind))
-	mux.HandleFunc("DELETE /api/v1/note-kinds/{id}", handleDeleteNoteKind(deps.DeleteNoteKind))
+		mux.HandleFunc("GET /api/v1/subjects", handleListSubjects(deps.ListSubjects))
+		mux.HandleFunc("POST /api/v1/subjects", handleCreateSubject(deps.CreateSubject))
+		mux.HandleFunc("GET /api/v1/subjects/{id}", handleGetSubject(deps.GetSubject))
+		mux.HandleFunc("PATCH /api/v1/subjects/{id}", handleUpdateSubject(deps.UpdateSubject))
+		mux.HandleFunc("DELETE /api/v1/subjects/{id}", handleDeleteSubject(deps.DeleteSubject))
 
-	mux.HandleFunc("GET /api/v1/subjects", handleListSubjects(deps.ListSubjects))
-	mux.HandleFunc("POST /api/v1/subjects", handleCreateSubject(deps.CreateSubject))
-	mux.HandleFunc("GET /api/v1/subjects/{id}", handleGetSubject(deps.GetSubject))
-	mux.HandleFunc("PATCH /api/v1/subjects/{id}", handleUpdateSubject(deps.UpdateSubject))
-	mux.HandleFunc("DELETE /api/v1/subjects/{id}", handleDeleteSubject(deps.DeleteSubject))
-
-	mux.HandleFunc("GET /api/v1/subjects/{id}/notes", handleListSubjectNotes(deps.ListSubjectNotes))
-	mux.HandleFunc("POST /api/v1/subjects/{id}/notes", handleCreateNote(deps.CreateNote))
-	mux.HandleFunc("GET /api/v1/notes", handleListNotesByTag(deps.ListNotesByTag))
-	mux.HandleFunc("GET /api/v1/tags", handleListTags(deps.ListTags))
-	mux.HandleFunc("GET /api/v1/notes/{id}", handleGetNote(deps.GetNote))
-	mux.HandleFunc("PATCH /api/v1/notes/{id}", handleUpdateNote(deps.UpdateNote))
-	mux.HandleFunc("DELETE /api/v1/notes/{id}", handleDeleteNote(deps.DeleteNote))
-
-	var handler http.Handler = jsonFallback(mux)
-	if deps.MaxBodyBytes > 0 {
-		handler = bodyLimitMiddleware(deps.MaxBodyBytes, handler)
+		mux.HandleFunc("GET /api/v1/subjects/{id}/notes", handleListSubjectNotes(deps.ListSubjectNotes))
+		mux.HandleFunc("POST /api/v1/subjects/{id}/notes", handleCreateNote(deps.CreateNote))
+		mux.HandleFunc("GET /api/v1/notes", handleListNotesByTag(deps.ListNotesByTag))
+		mux.HandleFunc("GET /api/v1/tags", handleListTags(deps.ListTags))
+		mux.HandleFunc("GET /api/v1/notes/{id}", handleGetNote(deps.GetNote))
+		mux.HandleFunc("PATCH /api/v1/notes/{id}", handleUpdateNote(deps.UpdateNote))
+		mux.HandleFunc("DELETE /api/v1/notes/{id}", handleDeleteNote(deps.DeleteNote))
 	}
-	handler = corsMiddleware(deps.AllowOrigins, handler)
-	handler = recoverMiddleware(handler)
-	handler = requestLogMiddleware(handler)
-	return handler
+}
+
+// NewRouter is the studies-only server: Register wrapped in the shared
+// middleware chain. The composition root uses httpx.NewServer directly.
+func NewRouter(deps RouterDeps) http.Handler {
+	return httpx.NewServer(httpx.Config{
+		AllowOrigins: deps.AllowOrigins,
+		MaxBodyBytes: deps.MaxBodyBytes,
+	}, Register(deps))
 }

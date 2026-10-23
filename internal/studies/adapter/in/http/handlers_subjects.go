@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	"github.com/afwilto/studies-mngr/internal/studies/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/studies/domain"
 )
@@ -39,14 +40,14 @@ func handleListSubjects(list in.ListSubjects) http.HandlerFunc {
 		for i, v := range views {
 			dtos[i] = toSubjectDTO(v)
 		}
-		writeList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
+		httpx.WriteList(w, http.StatusOK, dtos, listMeta{TotalItems: len(dtos)})
 	}
 }
 
 func handleCreateSubject(create in.CreateSubject) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createSubjectRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		categoryID, err := requiredUUIDField("categoryId", req.CategoryID)
@@ -62,13 +63,13 @@ func handleCreateSubject(create in.CreateSubject) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Location", "/api/v1/subjects/"+view.ID)
-		writeData(w, http.StatusCreated, toSubjectDTO(view))
+		httpx.WriteData(w, http.StatusCreated, toSubjectDTO(view))
 	}
 }
 
 func handleGetSubject(get in.GetSubject) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
@@ -77,18 +78,18 @@ func handleGetSubject(get in.GetSubject) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toSubjectDTO(view))
+		httpx.WriteData(w, http.StatusOK, toSubjectDTO(view))
 	}
 }
 
 func handleUpdateSubject(update in.UpdateSubject) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
 		var req updateSubjectRequest
-		if !decodeJSON(w, r, &req) {
+		if !httpx.DecodeJSON(w, r, &req) {
 			return
 		}
 		if !req.CategoryID.Set && !req.Name.Set && !req.Description.Set {
@@ -107,13 +108,13 @@ func handleUpdateSubject(update in.UpdateSubject) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		writeData(w, http.StatusOK, toSubjectDTO(view))
+		httpx.WriteData(w, http.StatusOK, toSubjectDTO(view))
 	}
 }
 
 func handleDeleteSubject(del in.DeleteSubject) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := pathID(w, r)
+		id, ok := httpx.PathID(w, r)
 		if !ok {
 			return
 		}
