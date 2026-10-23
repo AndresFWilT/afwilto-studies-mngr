@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -120,8 +121,18 @@ func questionIndexOf(path string) (int, bool) {
 	return n, true
 }
 
+// PlanFailure is the plan of an import that failed before PlanImport ran (the
+// parse and JSON Schema stages): the errors, and no write.
+func PlanFailure(errs []ImportError) ImportPlan { return failure(slices.Clone(errs), MediaReport{}) }
+
 // failedPlan builds the plan of a pipeline that stopped at a failing stage.
 func failedPlan(errs []ImportError, media MediaReport) ImportPlan {
+	sortByQuestion(errs)
+	return failure(errs, media)
+}
+
+// sortByQuestion lists question errors in file order, then the others.
+func sortByQuestion(errs []ImportError) {
 	sort.SliceStable(errs, func(a, b int) bool {
 		ia, oka := questionIndexOf(errs[a].Path)
 		ib, okb := questionIndexOf(errs[b].Path)
@@ -133,6 +144,9 @@ func failedPlan(errs []ImportError, media MediaReport) ImportPlan {
 		}
 		return false
 	})
+}
+
+func failure(errs []ImportError, media MediaReport) ImportPlan {
 	invalid := map[int]bool{}
 	for _, e := range errs {
 		if i, ok := questionIndexOf(e.Path); ok {
