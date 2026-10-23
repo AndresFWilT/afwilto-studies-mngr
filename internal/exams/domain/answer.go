@@ -120,7 +120,8 @@ func (a Attempt) Answer(position int, in AnswerInput, now time.Time) (Attempt, A
 const MaxLabelViolations = 10
 
 // labelViolations checks that every label is one the item shows and that none
-// repeats; a repeat is reported on its second occurrence.
+// repeats; a repeat is reported on its second occurrence. It stops after
+// MaxLabelViolations, so a huge selection cannot make a huge response.
 func labelViolations(s ItemSnapshot, selected []string) []Violation {
 	var out []Violation
 	seen := map[string]bool{}
@@ -131,6 +132,9 @@ func labelViolations(s ItemSnapshot, selected []string) []Violation {
 			out = append(out, Violation{Field: field, Rule: RuleInvalidLabel, Message: fmt.Sprintf("%q is not an option of this question", label)})
 		case seen[label]:
 			out = append(out, Violation{Field: field, Rule: RuleInvalidLabel, Message: fmt.Sprintf("label %s is repeated", label)})
+		}
+		if len(out) == MaxLabelViolations {
+			break
 		}
 		seen[label] = true
 	}
