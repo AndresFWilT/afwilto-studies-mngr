@@ -59,7 +59,13 @@ func (s *startAttemptService) Execute(ctx context.Context, examID string, cmd in
 	if open, found, err := s.attempts.FindInProgress(ctx, examID); err != nil {
 		return domain.AttemptView{}, err
 	} else if found {
-		return domain.AttemptView{}, domain.NewAttemptInProgress(open)
+		// An open attempt past deadlineAt + 5 s is finalized now, scored as it
+		// stands, and no longer blocks the start (slice 06b decision 3).
+		if _, finalized, err := finalizeIfDue(ctx, s.attempts, s.clock, open); err != nil {
+			return domain.AttemptView{}, err
+		} else if !finalized {
+			return domain.AttemptView{}, domain.NewAttemptInProgress(open)
+		}
 	}
 	bank, err := s.bank.LoadBank(ctx, examID)
 	if err != nil {
