@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,45 @@ func TestQuestionFilterViolations(t *testing.T) {
 				t.Errorf("violations = %+v, want one %s/format", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestQuestionFilterRejectsTextThatPostgresCannotStore(t *testing.T) { // phase-2 fix 2
+	cases := []struct {
+		name   string
+		filter QuestionFilter
+		fields []string
+	}{
+		{"q with a NUL", QuestionFilter{Text: "vp\x00c"}, []string{"q"}},
+		{"q with invalid UTF-8", QuestionFilter{Text: "vp\xffc"}, []string{"q"}},
+		{"origin with a NUL", QuestionFilter{Origin: "Set\x00"}, []string{"origin"}},
+		{"origin with invalid UTF-8", QuestionFilter{Origin: "\xc3\x28"}, []string{"origin"}},
+		{"both at once", QuestionFilter{Text: "\x00", Origin: "\xff"}, []string{"q", "origin"}},
+		{"alongside a bad difficulty", QuestionFilter{Text: "\x00", Difficulty: "nope"}, []string{"difficulty", "q"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, v := range tc.filter.Violations() {
+				if v.Field != "difficulty" && v.Rule != RuleInvalidText {
+					t.Errorf("violation %+v, want rule invalid_text", v)
+				}
+				got = append(got, v.Field)
+			}
+			slices.Sort(got)
+			want := slices.Clone(tc.fields)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("fields = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestQuestionFilterAcceptsOrdinaryUnicodeAndControlCharacters(t *testing.T) { // phase-2 fix 2
+	f := QuestionFilter{Text: "ñandú \U0001F600 tab\there", Origin: "Set Ünï"}
+
+	if got := f.Violations(); len(got) != 0 {
+		t.Errorf("violations = %+v, want none", got)
 	}
 }

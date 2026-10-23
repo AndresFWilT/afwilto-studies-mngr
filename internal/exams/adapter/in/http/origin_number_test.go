@@ -18,11 +18,11 @@ func fileWithOriginNumber(literal string) []byte {
 
 func TestOriginNumberAcceptsEveryIntegerSpellingTheSchemaAccepts(t *testing.T) { // M2
 	for literal, want := range map[string]int{
-		"7":                7,
-		"1.0":              1,
-		"1e3":              1000,
-		"2.5e1":            25,
-		"1000000":          1000000, // the cap (phase-2 fix 1 replaced the old beyond-float64 case)
+		"7":       7,
+		"1.0":     1,
+		"1e3":     1000,
+		"2.5e1":   25,
+		"1000000": 1000000, // the cap (phase-2 fix 1 replaced the old beyond-float64 case)
 	} {
 		file, errs := sharedReader(t).Read(fileWithOriginNumber(literal))
 

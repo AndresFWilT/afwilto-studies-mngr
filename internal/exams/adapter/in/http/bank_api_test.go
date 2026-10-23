@@ -240,6 +240,20 @@ func TestListQuestionsRejectsBadParametersTogether(t *testing.T) {
 	}
 }
 
+func TestListQuestionsWithNulOrInvalidUTF8InQOrOriginIsA422NotA500(t *testing.T) { // phase-2 fix 2
+	b := newBankAPI(t)
+
+	for query, field := range map[string]string{
+		"q=%00":          "q",
+		"q=vp%ffc":       "q",
+		"origin=Set%00":  "origin",
+		"origin=%c3%28":  "origin",
+		"q=a&origin=%ff": "origin",
+	} {
+		wantError(t, b.do(t, http.MethodGet, b.questionsPath(query), ""), http.StatusUnprocessableEntity, "validation_failed", field, "invalid_text")
+	}
+}
+
 func TestListQuestionsOfAnUnknownOrMalformedExamIsNotFound(t *testing.T) {
 	b := newBankAPI(t)
 
