@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/afwilto/studies-mngr/configs"
+	examshttp "github.com/afwilto/studies-mngr/internal/exams/adapter/in/http"
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	studieshttp "github.com/afwilto/studies-mngr/internal/studies/adapter/in/http"
 	"github.com/afwilto/studies-mngr/internal/studies/adapter/out/postgres"
 	"github.com/afwilto/studies-mngr/internal/studies/adapter/out/system"
@@ -51,10 +53,8 @@ func main() {
 	notes := postgres.NewNoteRepository(pool)
 	tags := postgres.NewTagQuery(pool)
 
-	router := studieshttp.NewRouter(studieshttp.RouterDeps{
-		Pinger:       pool,
-		AllowOrigins: cfg.AllowOrigins,
-		MaxBodyBytes: cfg.MaxBodyBytes,
+	studiesDeps := studieshttp.RouterDeps{
+		Pinger: pool,
 
 		ListCategories: usecase.NewListCategoriesService(categories),
 		CreateCategory: usecase.NewCreateCategoryService(categories, clock, ids),
@@ -81,7 +81,14 @@ func main() {
 		GetNoteKind:    usecase.NewGetNoteKindService(noteKinds),
 		RenameNoteKind: usecase.NewRenameNoteKindService(noteKinds, clock),
 		DeleteNoteKind: usecase.NewDeleteNoteKindService(noteKinds, notes, clock),
-	})
+	}
+	examDeps := examshttp.Deps{}
+
+	router := httpx.NewServer(httpx.Config{
+		AllowOrigins: cfg.AllowOrigins,
+		MaxBodyBytes: cfg.MaxBodyBytes,
+		BodyLimits:   examshttp.BodyLimits(cfg.MaxImportBytes),
+	}, studieshttp.Register(studiesDeps), examshttp.Register(examDeps))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
