@@ -157,3 +157,61 @@ func TestApplyImportIgnoresRowsThatBelongToNoLoadedQuestion(t *testing.T) { // M
 			len(seen.Questions), len(seen.Questions[0].Options), len(seen.Questions[0].Categories))
 	}
 }
+
+// Phase-2 fix 5: the browser list and the single-question read are one
+// snapshot too. Each parks the read on a late table, links the first question
+// to a second category from another connection, and lets the read finish: the
+// read must show the links as of its first statement.
+
+func linkBehindTheReader(t *testing.T, questionID, categoryID string) {
+	t.Helper()
+	exec(t, `INSERT INTO question_categories (question_id, category_id) VALUES ($1, $2)`, questionID, categoryID)
+}
+
+func TestListQuestionsReadsOneSnapshotEvenWhenALinkIsAddedMidRead(t *testing.T) { // fix 5
+	b := newBrowserEnv(t)
+	b.apply(t, fileOf(fq("q1", cn("Dominio", "Seguridad")), fq("q2", cn("Dominio", "VPC"))))
+	q1, vpc := b.questionID(t, "q1"), categoryID(t, "VPC")
+	release := holdTable(t, "exam_classifications") // read by the category-links query, the last of the list
+
+	done := make(chan []domain.QuestionSummary, 1)
+	go func() {
+		rows, err := b.bank.ListQuestions(ctx, b.exam.ID, domain.QuestionFilter{})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- rows
+	}()
+	waitForALockWait(t)
+	linkBehindTheReader(t, q1, vpc)
+	release()
+
+	for _, row := range <-done {
+		if row.Key == "q1" && len(row.Categories) != 1 {
+			t.Errorf("q1 shows %d category links, want 1: the link added mid-read must not leak in", len(row.Categories))
+		}
+	}
+}
+
+func TestGetQuestionReadsOneSnapshotEvenWhenALinkIsAddedMidRead(t *testing.T) { // fix 5
+	b := newBrowserEnv(t)
+	b.apply(t, fileOf(fq("q1", cn("Dominio", "Seguridad")), fq("q2", cn("Dominio", "VPC"))))
+	q1, vpc := b.questionID(t, "q1"), categoryID(t, "VPC")
+	release := holdTable(t, "question_options") // read after the question row and before its links
+
+	done := make(chan domain.Question, 1)
+	go func() {
+		q, err := b.bank.GetQuestion(ctx, q1)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- q
+	}()
+	waitForALockWait(t)
+	linkBehindTheReader(t, q1, vpc)
+	release()
+
+	if q := <-done; len(q.Categories) != 1 {
+		t.Errorf("question shows %d category links, want 1: the link added mid-read must not leak in", len(q.Categories))
+	}
+}
