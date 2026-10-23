@@ -134,7 +134,8 @@ func NewDeleteSubjectService(repo out.SubjectRepository, notes out.NoteRepositor
 	return &deleteSubjectService{repo: repo, notes: notes, exams: exams, clock: clock}
 }
 
-// Execute deletes logically. Alive notes block it (BR-DEL1).
+// Execute deletes logically. Alive notes (BR-DEL1) or alive exams (Spec 18
+// BR-E3) block it.
 func (s *deleteSubjectService) Execute(ctx context.Context, id string) error {
 	subject, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -147,6 +148,14 @@ func (s *deleteSubjectService) Execute(ctx context.Context, id string) error {
 	if count > 0 {
 		return domain.NewConflict("id", domain.RuleInUse,
 			fmt.Sprintf("subject has %d notes; move or delete them first", count))
+	}
+	exams, err := s.exams.CountAliveExams(ctx, id)
+	if err != nil {
+		return err
+	}
+	if exams > 0 {
+		return domain.NewConflict("id", domain.RuleInUse,
+			fmt.Sprintf("subject has %d exams; delete them first", exams))
 	}
 	subject.Delete(s.clock.Now())
 	return s.repo.Update(ctx, subject)
