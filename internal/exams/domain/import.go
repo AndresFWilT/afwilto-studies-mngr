@@ -89,6 +89,10 @@ type ImportWrite struct {
 	PromoteToPrimary string
 	Creates          []QuestionWrite
 	Updates          []QuestionWrite
+	// Media lists the images of the import's zip that the questions
+	// reference, once per hash: the files to store and the rows to insert
+	// (a row that exists is left alone).
+	Media []MediaFile
 	// Weights is set when the primary exists in inferred mode: one entry per
 	// alive primary category.
 	Weights []CategoryWeight
@@ -103,6 +107,10 @@ type PlanInput struct {
 	Primary string
 	NewID   func() string
 	Now     time.Time
+	// Archive is the zip the file came in, nil for a .json import. KnownMedia
+	// holds the stored hashes among the file's media:<sha256> references.
+	Archive    *MediaArchive
+	KnownMedia map[string]bool
 }
 
 // ImportPlan is the outcome of the semantic stages and of the inference. Write
