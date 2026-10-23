@@ -52,7 +52,10 @@ func (s ItemSnapshot) ChooseCount() int {
 	return n
 }
 
-// AttemptItem is one question of an attempt. 06b fills in the answer state.
+// AttemptItem is one question of an attempt with its answer state: Selected,
+// Flagged and AnsweredAt change while the attempt is open; Revealed and Correct
+// are set when feedback "each" shows the key, and Correct on every item when
+// the attempt closes.
 type AttemptItem struct {
 	Position   int
 	QuestionID string

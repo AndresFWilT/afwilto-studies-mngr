@@ -140,8 +140,8 @@ func (e *Exam) Delete(now time.Time) {
 	e.UpdatedAt = now
 }
 
-// SimulationResult is the outcome of the latest closed simulation attempt;
-// slice 06b fills it in.
+// SimulationResult is the outcome of the latest closed simulation attempt, by
+// the time it closed.
 type SimulationResult struct {
 	ScorePercent float64
 	Passed       bool
@@ -149,8 +149,8 @@ type SimulationResult struct {
 }
 
 // ExamSummary is the read model: the exam plus what its questions contribute.
-// QuestionTotal counts the alive questions, LastSimulation is nil until slice
-// 06b. Classifications (with their categories) fill the detail view; list
+// QuestionTotal counts the alive questions, LastSimulation is nil until the exam
+// has a closed simulation. Classifications (with their categories) fill the detail view; list
 // items leave them nil.
 type ExamSummary struct {
 	Exam

@@ -124,6 +124,12 @@ func main() {
 
 		PreviewSession: examsusecase.NewPreviewSessionService(examRepo, questionBank),
 		StartAttempt:   examsusecase.NewStartAttemptService(examRepo, questionBank, attemptRepo, clock, ids, examssystem.RandomSeeds{}),
+
+		GetAttempt:       examsusecase.NewGetAttemptService(attemptRepo, clock),
+		AnswerItem:       examsusecase.NewAnswerItemService(attemptRepo, clock),
+		SubmitAttempt:    examsusecase.NewSubmitAttemptService(attemptRepo, clock),
+		ReviewAttempt:    examsusecase.NewReviewAttemptService(attemptRepo, examspostgres.NewNoteDirectory(pool), clock),
+		ListExamAttempts: examsusecase.NewListExamAttemptsService(examRepo, attemptRepo),
 	}
 
 	router := httpx.NewServer(httpx.Config{
