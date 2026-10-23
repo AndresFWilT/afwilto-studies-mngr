@@ -112,3 +112,15 @@ func TestImportLimitIsIndependentOfBodyLimit(t *testing.T) { // S01-6
 		t.Errorf("MaxBodyBytes = %d, MaxImportBytes = %d; want 2048 and %d", cfg.MaxBodyBytes, cfg.MaxImportBytes, defaultImportLimit)
 	}
 }
+
+func TestMediaDirDefaultsToTheVolumePathAndCanBeOverridden(t *testing.T) { // slice 05 §1.7
+	t.Setenv("MEDIA_DIR", "")
+	if got := Load().MediaDir; got != "/data/media" {
+		t.Errorf("MediaDir = %q, want /data/media", got)
+	}
+
+	t.Setenv("MEDIA_DIR", "/srv/images")
+	if got := Load().MediaDir; got != "/srv/images" {
+		t.Errorf("MediaDir = %q, want /srv/images", got)
+	}
+}

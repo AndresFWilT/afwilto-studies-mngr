@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 )
 
 type stubPinger struct{ err error }
@@ -121,5 +123,17 @@ func TestWrongMethodIsJSONMethodNotAllowed(t *testing.T) {
 	}
 	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "GET") {
 		t.Errorf("Allow = %q, want GET listed", allow)
+	}
+}
+
+func TestReadyzNamesTheFailingComponentWithoutLeakingTheCause(t *testing.T) { // slice 05 §1.7, S05-5
+	cause := errors.New("open /data/media/.ready-123: read-only file system")
+	failing := &httpx.NotReadyError{Component: "media storage", Err: cause}
+
+	rec := serve(newTestRouter(failing), httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(body, "media storage unavailable") || strings.Contains(body, "/data/media") {
+		t.Errorf("status %d body %s; want 503 naming the component and hiding the cause", rec.Code, body)
 	}
 }

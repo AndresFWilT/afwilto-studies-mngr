@@ -15,6 +15,7 @@ type Config struct {
 	MaxBodyBytes   int64
 	MaxImportBytes int64
 	MigrateOnStart bool
+	MediaDir       string
 }
 
 func Load() Config {
