@@ -528,3 +528,36 @@ func TestZip64RecordsCannotHideTheRealDirectoryFromTheGuard(t *testing.T) { // f
 		}
 	}
 }
+
+// ── phase-3 fix 1: trailing bytes cannot push the end record out of the guard's window ──
+
+func TestTrailingBytesCannotHideTheEndRecordFromTheGuard(t *testing.T) { // phase-3 fix 1: archive/zip searches the last 65*1024 bytes
+	for _, trailing := range []int{65_600, 66_000, 66_500} {
+		data := append(craftedZip(65536+500, 500, 6, 0, 0), make([]byte, trailing)...) // the record says 500; the directory holds 66,036 empty entries
+
+		var err error
+		alloc := allocatedBy(func() { _, err = openImportZip(data, defaultZipLimits()) })
+
+		if err == nil || zipRule(t, err) != domain.RuleZipEntries {
+			t.Errorf("%d trailing bytes: err = %v, want zip_entries", trailing, err)
+		}
+		if alloc > 1<<20 {
+			t.Errorf("%d trailing bytes: rejecting it allocated %d bytes: archive/zip parsed the directory (budget 1 MiB)", trailing, alloc)
+		}
+	}
+}
+
+func TestTheEndRecordWindowIsTheOneArchiveZipSearches(t *testing.T) { // phase-3 fix 1 boundary: 65*1024 bytes from the end
+	base := craftedZip(3, 3, 6, 0, 0)
+	const window = 65 * 1024
+	for trailing, want := range map[int]bool{0: true, 0xFFFF: true, 0x10000: true, window - endRecordLen: true, window - endRecordLen + 1: false} {
+		data := append(slices.Clone(base), make([]byte, trailing)...)
+
+		if _, ok := findEndRecord(data); ok != want {
+			t.Errorf("%d trailing bytes: found = %v, want %v", trailing, ok, want)
+		}
+		if _, err := zip.NewReader(bytes.NewReader(data), int64(len(data))); (err == nil) != want {
+			t.Errorf("%d trailing bytes: archive/zip err = %v; the guard's window no longer matches it", trailing, err)
+		}
+	}
+}
