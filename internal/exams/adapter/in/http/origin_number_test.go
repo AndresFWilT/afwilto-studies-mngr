@@ -59,3 +59,24 @@ func TestOriginNumberFractionsAndZeroStillFailTheSchema(t *testing.T) { // M2 mu
 		}
 	}
 }
+
+// Phase-2 fix 1: origin.number is 1..1,000,000. A larger value used to be
+// stored and then broke the bank list (::int overflow).
+
+func TestOriginNumberAboveOneMillionFailsTheSchemaAtItsPath(t *testing.T) { // fix 1
+	for _, literal := range []string{"1000001", "3000000000", "1e7"} {
+		file, errs := sharedReader(t).Read(fileWithOriginNumber(literal))
+
+		if file != nil || len(errs) != 1 || errs[0].Path != "questions[0].origin.number" || errs[0].Rule != "schema" {
+			t.Errorf("number %s: file %v, errors %+v; want one schema error at questions[0].origin.number", literal, file != nil, errs)
+		}
+	}
+}
+
+func TestOriginNumberOfExactlyOneMillionIsAccepted(t *testing.T) { // fix 1 boundary
+	file, errs := sharedReader(t).Read(fileWithOriginNumber("1000000"))
+
+	if len(errs) != 0 || file.Questions[0].Origin.Number != 1000000 {
+		t.Errorf("errors %+v, want none and the number kept", errs)
+	}
+}

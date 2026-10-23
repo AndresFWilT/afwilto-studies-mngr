@@ -105,3 +105,28 @@ func TestValidateQuestionReportsCorrectCountOnceNotPerCheck(t *testing.T) {
 		t.Errorf("correct_count violations = %d, want 1", n)
 	}
 }
+
+func TestValidateQuestionCapsOriginNumberFromOneToOneMillion(t *testing.T) { // phase-2 fix 1
+	base := FileQuestion{Key: "q", Type: QuestionSingle, Options: opts(true, false)}
+	for name, tc := range map[string]struct {
+		origin *Origin
+		ok     bool
+	}{
+		"no origin":            {nil, true},
+		"number absent (zero)": {&Origin{Set: "S"}, true},
+		"number 1":             {&Origin{Set: "S", Number: 1}, true},
+		"number 1,000,000":     {&Origin{Set: "S", Number: 1_000_000}, true},
+		"number 1,000,001":     {&Origin{Set: "S", Number: 1_000_001}, false},
+		"number 3,000,000,000": {&Origin{Set: "S", Number: 3_000_000_000}, false},
+		"negative number":      {&Origin{Set: "S", Number: -1}, false},
+	} {
+		q := base
+		q.Origin = tc.origin
+
+		got := violationSet(ValidateQuestion(q))
+
+		if has := got["origin.number|"+RuleRange]; has == tc.ok {
+			t.Errorf("%s: violations %v, want range at origin.number: %v", name, got, !tc.ok)
+		}
+	}
+}

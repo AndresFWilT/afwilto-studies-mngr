@@ -642,3 +642,43 @@ func TestMergeScopeIsEnforcedAgainstTheDatabaseState(t *testing.T) { // S04-7
 		t.Errorf("version = %d", b.version(t))
 	}
 }
+
+// Phase-2 fix 1: origin.number is capped at 1,000,000 and the browser sorts it
+// as a bigint, so no stored value can make the list fail.
+
+func TestAnImportedOriginNumberOfOneMillionKeepsTheListWorking(t *testing.T) { // fix 1
+	b := newBrowserEnv(t)
+	b.apply(t, fileOf(
+		originOf(fq("big", cn("Dominio", "A")), "S", 1_000_000),
+		originOf(fq("small", cn("Dominio", "A")), "S", 2),
+	))
+
+	if got, want := b.keys(t, domain.QuestionFilter{}), []string{"small", "big"}; !slices.Equal(got, want) {
+		t.Errorf("keys = %v, want %v", got, want)
+	}
+}
+
+func TestAnImportAboveTheCapIsRefusedAndWritesNothing(t *testing.T) { // fix 1 (domain stage 3, over the real database)
+	b := newBrowserEnv(t)
+
+	r := b.run(t, false, "", fileOf(originOf(fq("huge", cn("Dominio", "A")), "S", 3_000_000_000)))
+
+	if r.Applied || len(r.Errors) != 1 || r.Errors[0].Path != "questions[0].origin.number" || r.Errors[0].Rule != domain.RuleRange {
+		t.Errorf("applied %v errors %+v, want one range error at questions[0].origin.number", r.Applied, r.Errors)
+	}
+	if got := b.keys(t, domain.QuestionFilter{}); len(got) != 0 {
+		t.Errorf("keys = %v, want none", got)
+	}
+}
+
+func TestAStoredOriginNumberBeyondInt32DoesNotBreakTheList(t *testing.T) { // fix 1, defense in depth: ORDER BY casts to bigint
+	b := newBrowserEnv(t)
+	b.apply(t, fileOf(originOf(fq("legacy", cn("Dominio", "A")), "S", 1), originOf(fq("next", cn("Dominio", "A")), "S", 2)))
+	if _, err := pool.Exec(ctx, `UPDATE questions SET origin = jsonb_set(origin, '{number}', '3000000000') WHERE exam_id = $1 AND key = 'legacy'`, b.exam.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := b.keys(t, domain.QuestionFilter{}), []string{"next", "legacy"}; !slices.Equal(got, want) {
+		t.Errorf("keys = %v, want %v", got, want)
+	}
+}
