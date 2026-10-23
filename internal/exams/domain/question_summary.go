@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // QuestionSummary is a row of the bank browser (Spec 18 slice 04 §1.1).
@@ -34,12 +35,21 @@ type QuestionFilter struct {
 // Difficulties are the allowed values of a question's difficulty.
 var Difficulties = []string{"easy", "medium", "hard"}
 
-// Violations reports the filter values that are not allowed.
+// Violations reports the filter values that are not allowed: an unknown
+// difficulty, and q or origin text Postgres cannot compare (U+0000, invalid
+// UTF-8; phase-2 fix 2).
 func (f QuestionFilter) Violations() []Violation {
+	var out []Violation
 	if f.Difficulty != "" && !slices.Contains(Difficulties, f.Difficulty) {
-		return []Violation{{Field: "difficulty", Rule: "format", Message: "difficulty must be easy, medium or hard"}}
+		out = append(out, Violation{Field: "difficulty", Rule: "format", Message: "difficulty must be easy, medium or hard"})
 	}
-	return nil
+	for _, text := range []struct{ field, value string }{{"q", f.Text}, {"origin", f.Origin}} {
+		if hasNUL(text.value) || !utf8.ValidString(text.value) {
+			out = append(out, Violation{Field: text.field, Rule: RuleInvalidText,
+				Message: text.field + " must be valid text without NUL characters (U+0000)"})
+		}
+	}
+	return out
 }
 
 const excerptRunes = 200
