@@ -1253,7 +1253,7 @@ components:
       minProperties: 1
       properties:
         set: { type: string, minLength: 1, maxLength: 120 }
-        number: { type: integer, minimum: 1 }
+        number: { type: integer, minimum: 1, maximum: 1000000 }
         noteRef: { type: string, minLength: 1, maxLength: 200 }
     QuestionCategoryRef:
       type: object

@@ -54,7 +54,7 @@ func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID strin
 		SELECT q.id, q.key, q.type, q.stem, q.difficulty, q.origin, q.version, q.updated_at
 		FROM questions q WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY lower(q.origin->>'set') COLLATE "C" NULLS LAST, (q.origin->>'set') COLLATE "C" NULLS LAST,
-		         ((q.origin->>'number')::int) NULLS LAST, q.key COLLATE "C"`, args...)
+		         ((q.origin->>'number')::bigint) NULLS LAST, q.key COLLATE "C"`, args...)
 	if err != nil {
 		return nil, err
 	}

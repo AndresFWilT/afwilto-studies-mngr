@@ -101,6 +101,10 @@ const (
 
 var keyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,99}$`)
 
+// MaxOriginNumber is the largest origin.number (phase-2 fix 1); the JSON Schema
+// says the same in questions.schema.json.
+const MaxOriginNumber = 1_000_000
+
 // ValidateQuestion applies BR-Q1, BR-Q2 and the BR-Q3 key pattern to one
 // question, so that a path that does not go through the JSON Schema is still
 // guarded. Violation fields are relative to the question: "key", "options",
@@ -120,6 +124,10 @@ func ValidateQuestion(q FileQuestion) []Violation {
 			Message: fmt.Sprintf("a question has 2 to 6 options, this one has %d", n)})
 	} else if msg := correctCountProblem(q); msg != "" {
 		out = append(out, Violation{Field: "options", Rule: RuleCorrectCount, Message: msg})
+	}
+	if q.Origin != nil && (q.Origin.Number < 0 || q.Origin.Number > MaxOriginNumber) {
+		out = append(out, Violation{Field: "origin.number", Rule: RuleRange,
+			Message: fmt.Sprintf("origin.number must be a whole number from 1 to %d, got %d", MaxOriginNumber, q.Origin.Number)})
 	}
 	for i, o := range q.Options {
 		switch {

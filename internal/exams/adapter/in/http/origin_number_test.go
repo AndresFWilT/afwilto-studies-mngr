@@ -22,7 +22,7 @@ func TestOriginNumberAcceptsEveryIntegerSpellingTheSchemaAccepts(t *testing.T) {
 		"1.0":              1,
 		"1e3":              1000,
 		"2.5e1":            25,
-		"9007199254740993": 9007199254740993, // beyond float64's exact range: must not round
+		"1000000":          1000000, // the cap (phase-2 fix 1 replaced the old beyond-float64 case)
 	} {
 		file, errs := sharedReader(t).Read(fileWithOriginNumber(literal))
 
