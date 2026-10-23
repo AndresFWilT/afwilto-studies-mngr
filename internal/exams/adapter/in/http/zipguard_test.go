@@ -281,23 +281,17 @@ func TestAnEntryThatLiesAboutItsSizeIsZipSizeWhenRead(t *testing.T) { // declare
 	}
 }
 
-func TestAnEntryThatDecompressesToMoreThanTheTotalBudgetIsZipSize(t *testing.T) { // the running total, not only each header
-	limits := zipLimits{MaxEntries: 10, MaxTotal: 3000, MaxRootJSON: 3000}
-	a := zent{name: "questions.json", data: []byte(rootJSON)}
-	big := zent{name: "a.bin", data: bytes.Repeat([]byte("q"), 2900)}
-	data := buildZip(t, a, big, zent{name: "b.bin", data: bytes.Repeat([]byte("q"), 100)})
-	z, err := openImportZip(data, limits)
+func TestAnImageEntryThatLiesAboutItsSizeIsZipSizeWhenRead(t *testing.T) { // the counting reader on every entry, not only the JSON
+	data := patchDeclaredSize(t, buildZip(t, questionsEntry(), zent{name: "img/a.png", data: bytes.Repeat([]byte("q"), 5000)}), "img/a.png", 10)
+	z, err := openImportZip(data, defaultZipLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, _, err := z.ReadEntry("a.bin", 5000); err != nil {
-		t.Fatalf("first read: %v", err)
-	}
-	_, _, err = z.ReadEntry("b.bin", 5000)
+	_, _, err = z.ReadEntry("img/a.png", 1<<20)
 
 	if err == nil || zipRule(t, err) != domain.RuleZipSize {
-		t.Errorf("err = %v, want zip_size once the budget is spent", err)
+		t.Errorf("err = %v, want zip_size", err)
 	}
 }
 
@@ -359,5 +353,23 @@ func TestBytesThatAreNotAZipAreFileType(t *testing.T) { // PK magic but no end r
 		if got := zipRule(t, err); got != domain.RuleFileType {
 			t.Errorf("%s: rule = %s, want file_type", name, got)
 		}
+	}
+}
+
+func TestEndRecordCountReadsTheEntryCountWithoutParsingTheDirectory(t *testing.T) { // memory guard before archive/zip builds its entry list
+	three := buildZip(t, questionsEntry(), zent{name: "a"}, zent{name: "b"})
+	var many []zent
+	for i := 0; i < 70000; i++ {
+		many = append(many, zent{name: fmt.Sprintf("e%d", i), store: true})
+	}
+
+	if n, ok := endRecordCount(three); !ok || n != 3 {
+		t.Errorf("endRecordCount(3 entries) = %d, %v", n, ok)
+	}
+	if n, ok := endRecordCount(buildZip(t, many...)); !ok || n != 0xFFFF {
+		t.Errorf("endRecordCount(70,000 entries) = %d, %v; want the zip64 marker 65535", n, ok)
+	}
+	if _, ok := endRecordCount([]byte("PK\x03\x04 and no end record")); ok {
+		t.Error("an end record was found in junk")
 	}
 }
