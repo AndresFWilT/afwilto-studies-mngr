@@ -95,22 +95,20 @@ func (s *updateExamService) Execute(ctx context.Context, id string, cmd in.Updat
 	if cmd.Version < 1 {
 		return domain.ExamSummary{}, domain.SingleViolation("version", "required", "version must be the integer version the client read (>= 1)")
 	}
-	if cmd.Edit == (domain.ExamEdit{}) {
+	if cmd.Edit == (domain.ExamEdit{}) && cmd.Structure.IsZero() {
 		return domain.ExamSummary{}, domain.SingleViolation("body", "required",
-			"at least one of name, questionCount, timeLimitMin or passPercent must be provided")
+			"at least one field to change must be provided: an exam field, classifications, primaryClassificationId, weights, weightMode or categories")
 	}
-	exam, err := s.repo.Get(ctx, id)
+	// The plan runs inside the bank's transaction, against the exam row and
+	// the bank it writes to; the version check is the optimistic guarantee.
+	err := s.bank.ApplyEdit(ctx, id, func(exam domain.Exam, bank domain.Bank) (*domain.EditWrite, error) {
+		write, err := domain.PlanExamEdit(exam, bank, cmd.Version, cmd.Edit, cmd.Structure, s.clock.Now())
+		if err != nil {
+			return nil, err
+		}
+		return &write, nil
+	})
 	if err != nil {
-		return domain.ExamSummary{}, err
-	}
-	if exam.Version != cmd.Version { // friendly pre-check; the UPDATE itself is the guarantee
-		return domain.ExamSummary{}, domain.NewConflict("version", domain.RuleStaleVersion,
-			"the exam was changed since you read it; reload and re-apply your edit")
-	}
-	if err := exam.Edit(cmd.Edit, s.clock.Now()); err != nil {
-		return domain.ExamSummary{}, err
-	}
-	if err := s.repo.Update(ctx, exam, cmd.Version); err != nil {
 		return domain.ExamSummary{}, err
 	}
 	return s.repo.GetSummary(ctx, id)
