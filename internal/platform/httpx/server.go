@@ -21,9 +21,7 @@ func NewServer(cfg Config, registrars ...func(*http.ServeMux)) http.Handler {
 	}
 
 	var handler http.Handler = JSONFallback(mux)
-	if cfg.MaxBodyBytes > 0 {
-		handler = BodyLimit(cfg.MaxBodyBytes, handler)
-	}
+	handler = BodyLimitByPattern(mux, cfg.MaxBodyBytes, cfg.BodyLimits, handler)
 	handler = CORS(cfg.AllowOrigins, handler)
 	handler = Recover(handler)
 	handler = RequestLog(handler)

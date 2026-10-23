@@ -80,7 +80,33 @@ func CORS(allowOrigins []string, next http.Handler) http.Handler {
 // BodyLimit caps every request body; reads past the cap fail with
 // *http.MaxBytesError, which the JSON decoder maps to 413 payload_too_large.
 func BodyLimit(maxBytes int64, next http.Handler) http.Handler {
+	return bodyLimit(func(*http.Request) (int64, bool) { return maxBytes, true }, next)
+}
+
+// BodyLimitByPattern is BodyLimit with per-route overrides: a request whose
+// matched mux pattern ("POST /path/{id}") has an entry in overrides gets that
+// cap, every other request gets maxBytes. A maxBytes of 0 leaves routes
+// without an override uncapped.
+func BodyLimitByPattern(mux *http.ServeMux, maxBytes int64, overrides map[string]int64, next http.Handler) http.Handler {
+	return bodyLimit(func(r *http.Request) (int64, bool) {
+		if len(overrides) > 0 {
+			if _, pattern := mux.Handler(r); pattern != "" {
+				if limit, ok := overrides[pattern]; ok {
+					return limit, true
+				}
+			}
+		}
+		return maxBytes, maxBytes > 0
+	}, next)
+}
+
+func bodyLimit(limitFor func(*http.Request) (int64, bool), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		maxBytes, capped := limitFor(r)
+		if !capped {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if carriesBody(r.Method) && r.ContentLength > maxBytes {
 			WriteError(w, http.StatusRequestEntityTooLarge, ErrorBody{
 				Code:    "payload_too_large",

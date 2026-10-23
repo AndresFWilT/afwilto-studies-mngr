@@ -23,6 +23,7 @@ func Load() Config {
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		AllowOrigins:   splitOrigins(envOr("ALLOW_ORIGINS", "http://localhost:3000,http://localhost:3008")),
 		MaxBodyBytes:   envInt64Or("MAX_BODY_BYTES", 1048576),
+		MaxImportBytes: envInt64Or("MAX_IMPORT_BYTES", 53477376), // 51 MiB: a 50 MiB zip plus multipart overhead
 		MigrateOnStart: envBoolOr("MIGRATE_ON_START", true),
 	}
 }
