@@ -87,8 +87,9 @@ type errorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`
 		Details []struct {
-			Field string `json:"field"`
-			Rule  string `json:"rule"`
+			Field   string `json:"field"`
+			Rule    string `json:"rule"`
+			Message string `json:"message"`
 		} `json:"details"`
 	} `json:"error"`
 }

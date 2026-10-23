@@ -22,6 +22,13 @@ type Deps struct {
 	// Slice 03: the question import. Both are needed for the route to exist.
 	ImportQuestions in.ImportQuestions
 	FileReader      *QuestionFileReader
+
+	// Slice 04: the bank browser, the single-question endpoints and the
+	// category merge. Each route exists when its use case is wired.
+	ListExamQuestions in.ListExamQuestions
+	GetQuestion       in.GetQuestion
+	DeleteQuestion    in.DeleteQuestion
+	MergeCategories   in.MergeCategories
 }
 
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02)
