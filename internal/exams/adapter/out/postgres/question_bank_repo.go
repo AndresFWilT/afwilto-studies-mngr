@@ -290,6 +290,13 @@ func (r *QuestionBankRepository) ApplyImport(ctx context.Context, examID string,
 // categories, then questions with options and links, then the weights.
 func writeImport(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.ImportWrite) error {
 	batch := &pgx.Batch{}
+	// The image rows go first and commit with the import; a hash that is
+	// already stored is left as it is (the bytes are the same by definition).
+	for _, f := range w.Media {
+		batch.Queue(`INSERT INTO media (sha256, content_type, bytes, width, height, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sha256) DO NOTHING`,
+			f.Media.SHA256, f.Media.ContentType, f.Media.Bytes, f.Media.Width, f.Media.Height, w.Now)
+	}
 	for _, c := range w.Classifications {
 		batch.Queue(`INSERT INTO exam_classifications (id, exam_id, name, fold_name, position, weight_mode, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)`, c.ID, w.ExamID, c.Name, c.Fold, c.Position, string(c.WeightMode), w.Now)
