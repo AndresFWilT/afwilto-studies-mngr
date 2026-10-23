@@ -132,6 +132,20 @@ func TestListQuestionsFiltersAndSortsInSQL(t *testing.T) { // S04-1
 	}
 }
 
+func TestListQuestionsSortsOriginSetsIgnoringCase(t *testing.T) {
+	b := newBrowserEnv(t)
+	b.apply(t, fileOf(
+		originOf(fq("upper", cn("Dominio", "A")), "Beta Set", 1),
+		originOf(fq("lower", cn("Dominio", "A")), "alpha set", 1),
+		originOf(fq("same-b", cn("Dominio", "A")), "Gamma", 2),
+		originOf(fq("same-a", cn("Dominio", "A")), "gamma", 2),
+	))
+
+	if got, want := b.keys(t, domain.QuestionFilter{}), []string{"lower", "upper", "same-b", "same-a"}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
 func TestListQuestionsTreatsLikeWildcardsInQAsPlainCharacters(t *testing.T) {
 	b := newBrowserEnv(t)
 	odd := fq("odd", cn("Dominio", "A"))
@@ -169,7 +183,8 @@ func TestListQuestionsRowsCarryTheSummaryFields(t *testing.T) {
 
 func TestListQuestionsWithoutAPrimaryTreatsEveryQuestionAsUnclassified(t *testing.T) {
 	b := newBrowserEnv(t)
-	b.apply(t, fileOf(fq("a", cn("Dominio", "X"), cn("Servicio", "P")), fq("b", cn("Dominio", "X", "Y"), cn("Servicio", "P")))) // Dominio is multi-valued in b: no primary
+	// both classifications are multi-valued in b, so no primary is resolved
+	b.apply(t, fileOf(fq("a", cn("Dominio", "X"), cn("Servicio", "P")), fq("b", cn("Dominio", "X", "Y"), cn("Servicio", "P", "Q"))))
 
 	if got := b.keys(t, domain.QuestionFilter{Unclassified: true}); !slices.Equal(got, []string{"a", "b"}) {
 		t.Errorf("unclassified = %v, want both", got)

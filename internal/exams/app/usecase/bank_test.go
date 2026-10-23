@@ -295,3 +295,26 @@ func TestADeletedKeyCanBeImportedAgainAsANewQuestion(t *testing.T) { // the aliv
 		t.Errorf("counts = %+v, want a new question for the freed key", r.Counts)
 	}
 }
+
+func TestListSortsOriginSetsIgnoringCase(t *testing.T) {
+	e := newImportEnv(t)
+	e.run(t, false, "Dominio", fileOf(
+		withOrigin(fq("upper", cn("Dominio", "A")), "Beta Set", 1),
+		withOrigin(fq("lower", cn("Dominio", "A")), "alpha set", 1),
+		withOrigin(fq("same-b", cn("Dominio", "A")), "Gamma", 2),
+		withOrigin(fq("same-a", cn("Dominio", "A")), "gamma", 2),
+	))
+	rows, err := NewListExamQuestionsService(e.bank).Execute(ctx, e.examID, domain.QuestionFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var keys []string
+	for _, r := range rows {
+		keys = append(keys, r.Key)
+	}
+	want := []string{"lower", "upper", "same-b", "same-a"} // alpha, Beta, then Gamma before gamma (exact order breaks the tie)
+	if !slices.Equal(keys, want) {
+		t.Errorf("order = %v, want %v", keys, want)
+	}
+}

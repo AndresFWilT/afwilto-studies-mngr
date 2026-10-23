@@ -93,6 +93,18 @@ type originJSON struct {
 	NoteRef string `json:"noteRef,omitempty"`
 }
 
+// decodeOrigin reads the origin column; nil for NULL.
+func decodeOrigin(raw []byte) (*domain.Origin, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	var o originJSON
+	if err := json.Unmarshal(raw, &o); err != nil {
+		return nil, err
+	}
+	return &domain.Origin{Set: o.Set, Number: o.Number, NoteRef: o.NoteRef}, nil
+}
+
 func loadBank(ctx context.Context, q queryer, examID string) (domain.Bank, error) {
 	classes, err := loadClassifications(ctx, q, examID)
 	if err != nil {
@@ -127,13 +139,9 @@ func loadBank(ctx context.Context, q queryer, examID string) (domain.Bank, error
 		if difficulty != nil {
 			qu.Difficulty = *difficulty
 		}
-		if origin != nil {
-			var o originJSON
-			if err := json.Unmarshal(origin, &o); err != nil {
-				rows.Close()
-				return domain.Bank{}, fmt.Errorf("question %s origin: %w", qu.Key, err)
-			}
-			qu.Origin = &domain.Origin{Set: o.Set, Number: o.Number, NoteRef: o.NoteRef}
+		if qu.Origin, err = decodeOrigin(origin); err != nil {
+			rows.Close()
+			return domain.Bank{}, fmt.Errorf("question %s origin: %w", qu.Key, err)
 		}
 		index[qu.ID] = len(bank.Questions)
 		bank.Questions = append(bank.Questions, qu)
@@ -360,16 +368,4 @@ func alivePairs(bank domain.Bank) map[string]map[string]bool {
 		out[q.ID] = set
 	}
 	return out
-}
-
-func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID string, filter domain.QuestionFilter) ([]domain.QuestionSummary, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (domain.Question, error) {
-	return domain.Question{}, errors.New("not implemented")
-}
-
-func (r *QuestionBankRepository) ApplyEdit(ctx context.Context, examID string, plan func(domain.Exam, domain.Bank) (*domain.EditWrite, error)) error {
-	return errors.New("not implemented")
 }

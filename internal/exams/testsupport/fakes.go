@@ -231,8 +231,9 @@ func (b *FakeQuestionBank) ApplyImport(ctx context.Context, examID string, plan 
 
 // ── slice 04: browser, single reads and edits ──────────────────────────────
 
-// ListQuestions filters and sorts like the SQL adapter: origin set, origin
-// number, key (byte order), questions without a set or number last.
+// ListQuestions filters and sorts like the SQL adapter: origin set (ignoring
+// case, then exactly), origin number, key (byte order), questions without a
+// set or number last.
 func (b *FakeQuestionBank) ListQuestions(ctx context.Context, examID string, f domain.QuestionFilter) ([]domain.QuestionSummary, error) {
 	if _, err := b.exams.Get(ctx, examID); err != nil {
 		return nil, err
@@ -294,6 +295,9 @@ func (b *FakeQuestionBank) ListQuestions(ctx context.Context, examID string, f d
 			return cs == nil
 		}
 		if as != nil && *as != *cs {
+			if la, lc := strings.ToLower(*as), strings.ToLower(*cs); la != lc {
+				return la < lc
+			}
 			return *as < *cs
 		}
 		an, cn := originNumber(a), originNumber(c)
