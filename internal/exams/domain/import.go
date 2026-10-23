@@ -131,3 +131,10 @@ func ResolvePrimary(existing, param string, usages []ClassificationUsage) (name 
 // SimilarNames lists the existing names that a new name resembles: folded
 // Levenshtein distance <= 2 or an equal slug (FR-3.2).
 func SimilarNames(name string, existing []string) []string { return nil }
+
+// DefaultSource stands in when neither the question nor the file has one
+// (Question.source is required by the contract).
+var DefaultSource = Source{Kind: "other", Name: "unspecified"}
+
+// After returns the bank as it will be once w is applied, without touching b.
+func (b Bank) After(w ImportWrite) Bank { return Bank{} }
