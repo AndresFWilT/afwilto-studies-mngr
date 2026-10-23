@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/afwilto/studies-mngr/internal/exams/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
+	"github.com/afwilto/studies-mngr/internal/exams/testsupport"
 )
 
 const (
@@ -258,5 +260,76 @@ func TestARejectedStartConfigDoesNotFinalizeTheExpiredAttempt(t *testing.T) {
 	wantViolation(t, err, "config.selection.count", domain.RuleRange)
 	if e.attempts.Rows[old.ID].Status != domain.AttemptInProgress {
 		t.Error("a start that fails validation must not touch the open attempt")
+	}
+}
+
+// ── phase-3 fix 2: start racing a concurrent close of the open attempt ──────
+
+// afterFindRepo runs hook right after FindInProgress answered, which is the
+// window another request closes the open attempt in.
+type afterFindRepo struct {
+	*testsupport.FakeAttemptRepo
+	hook func()
+}
+
+func (r afterFindRepo) FindInProgress(ctx context.Context, examID string) (string, bool, error) {
+	id, found, err := r.FakeAttemptRepo.FindInProgress(ctx, examID)
+	if found && r.hook != nil {
+		r.hook()
+	}
+	return id, found, err
+}
+
+func TestStartRacingASubmitOfTheOpenAttemptStartsTheNewOneInsteadOfNamingAClosedAttempt(t *testing.T) { // phase-3 fix 2
+	e := newSessionEnv(t)
+	open := e.begin(t, randomUntimed(3), nil)
+	racing := afterFindRepo{FakeAttemptRepo: e.attempts, hook: func() { e.attempts.Close(open.ID) }}
+	start := NewStartAttemptService(e.repo, e.bank, racing, e.clock, &testsupport.SeqIDGen{N: 9000}, testsupport.FixedSeeds{Seed: 1})
+
+	fresh, err := start.Execute(ctx, e.examID, in.StartAttemptCommand{Config: randomUntimed(2)})
+
+	if err != nil || fresh.ID == open.ID || fresh.Status != domain.AttemptInProgress {
+		t.Fatalf("start = %v, err %v; want a new open attempt, not a 409 naming the closed %s", fresh.Attempt.ID, err, open.ID)
+	}
+}
+
+func TestStartRacingAFinalizeOfTheExpiredAttemptStartsTheNewOneInsteadOfNamingAClosedAttempt(t *testing.T) { // phase-3 fix 2
+	e := newSessionEnv(t)
+	old := e.begin(t, timedRandom(4, 10, domain.FeedbackEnd), nil)
+	e.at(10*time.Minute + 6*time.Second)
+	racing := afterFindRepo{FakeAttemptRepo: e.attempts, hook: func() {
+		if _, err := NewGetAttemptService(e.attempts, e.clock).Execute(ctx, old.ID); err != nil { // a GET finalizes it first
+			t.Errorf("racing GET: %v", err)
+		}
+	}}
+	start := NewStartAttemptService(e.repo, e.bank, racing, e.clock, &testsupport.SeqIDGen{N: 9000}, testsupport.FixedSeeds{Seed: 1})
+
+	fresh, err := start.Execute(ctx, e.examID, in.StartAttemptCommand{Config: randomUntimed(2)})
+
+	if err != nil || fresh.ID == old.ID || fresh.Status != domain.AttemptInProgress {
+		t.Fatalf("start = %v, err %v; want a new open attempt, not a 409 naming the expired %s", fresh.Attempt.ID, err, old.ID)
+	}
+	if got := e.attempts.Rows[old.ID].Status; got != domain.AttemptExpired {
+		t.Errorf("old = %q, want expired", got)
+	}
+}
+
+func TestStartStillNamesTheAttemptThatIsActuallyInProgressWhenItLosesTheRaceToAnotherStart(t *testing.T) { // phase-3 fix 2: a real unique violation stays a 409
+	e := newSessionEnv(t)
+	open := e.begin(t, randomUntimed(3), nil)
+	racing := afterFindRepo{FakeAttemptRepo: e.attempts, hook: func() {
+		e.attempts.Close(open.ID)
+		e.begin(t, randomUntimed(2), nil) // another start wins the slot while ours is between its checks
+	}}
+	start := NewStartAttemptService(e.repo, e.bank, racing, e.clock, &testsupport.SeqIDGen{N: 9000}, testsupport.FixedSeeds{Seed: 1})
+
+	_, err := start.Execute(ctx, e.examID, in.StartAttemptCommand{Config: randomUntimed(2)})
+
+	wantConflict(t, err, domain.RuleAttemptInProgress)
+	named := err.(*domain.ConflictError).Message
+	for id, a := range e.attempts.Rows {
+		if a.Status != domain.AttemptInProgress && strings.Contains(named, id) {
+			t.Errorf("the 409 names %s, which is %s: %s", id, a.Status, named)
+		}
 	}
 }

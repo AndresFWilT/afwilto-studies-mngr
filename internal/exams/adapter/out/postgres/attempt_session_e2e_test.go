@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	examshttp "github.com/afwilto/studies-mngr/internal/exams/adapter/in/http"
+	"github.com/afwilto/studies-mngr/internal/exams/app/port/in"
+	"github.com/afwilto/studies-mngr/internal/exams/app/port/out"
 	"github.com/afwilto/studies-mngr/internal/exams/app/usecase"
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
 	"github.com/afwilto/studies-mngr/internal/exams/testsupport"
@@ -304,5 +307,106 @@ func TestConcurrentSubmitsOverHTTPCloseTheAttemptOnce(t *testing.T) { // the row
 	}
 	if ok != 1 || conflict != racers-1 {
 		t.Errorf("statuses = %v, want one 200 and %d 409", statuses, racers-1)
+	}
+}
+
+// ── phase-3 fix 2: start racing a concurrent close of the open attempt ──────
+
+// afterFindRepo runs hook right after FindInProgress found an open attempt,
+// the window in which another request closes it.
+type afterFindRepo struct {
+	out.AttemptRepository
+	hook func()
+}
+
+func (r afterFindRepo) FindInProgress(ctx context.Context, examID string) (string, bool, error) {
+	id, found, err := r.AttemptRepository.FindInProgress(ctx, examID)
+	if found && r.hook != nil {
+		r.hook()
+	}
+	return id, found, err
+}
+
+func (e *sessionE2E) startService(hook func()) in.StartAttempt {
+	return usecase.NewStartAttemptService(e.exams, e.bank, afterFindRepo{AttemptRepository: e.attempts, hook: hook}, e.clock, uuidGen{}, testsupport.FixedSeeds{Seed: 5})
+}
+
+func (e *sessionE2E) inProgressRows(t *testing.T) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT id FROM attempts WHERE exam_id = $1 AND status = 'in_progress'`, e.exam.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func untimedTwo() domain.SessionConfig {
+	return domain.SessionConfig{Selection: domain.Selection{Kind: domain.SelectRandom, Count: 2}, Timing: &domain.Timing{Kind: domain.Untimed}, Feedback: domain.FeedbackEnd}
+}
+
+func TestStartRacingASubmitOfTheOpenAttemptNeverNamesAClosedAttemptOverRealPostgres(t *testing.T) { // phase-3 fix 2
+	e := newSessionE2E(t)
+	open := e.start(t, `{"selection":{"kind":"random","count":3},"timing":{"kind":"untimed"},"feedback":"end"}`)["id"].(string)
+	start := e.startService(func() { e.call(t, http.MethodPost, "/api/v1/attempts/"+open+"/submit", "") })
+
+	fresh, err := start.Execute(ctx, e.exam.ID, in.StartAttemptCommand{Config: untimedTwo()})
+
+	if err != nil || fresh.ID == open {
+		t.Fatalf("start = %v, err %v; want a new attempt, not a 409 naming the submitted %s", fresh.ID, err, open)
+	}
+	if rows := e.inProgressRows(t); len(rows) != 1 || rows[0] != fresh.ID {
+		t.Errorf("in_progress rows = %v, want exactly the new attempt %s", rows, fresh.ID)
+	}
+}
+
+func TestStartRacingAFinalizeOfTheExpiredAttemptNeverNamesAClosedAttemptOverRealPostgres(t *testing.T) { // phase-3 fix 2
+	e := newSessionE2E(t)
+	old := e.start(t, `{"selection":{"kind":"random","count":3},"timing":{"kind":"timed","minutes":10},"feedback":"end"}`)["id"].(string)
+	e.clock.T = e.t0.Add(10*time.Minute + 6*time.Second)
+	start := e.startService(func() { e.call(t, http.MethodGet, "/api/v1/attempts/"+old, "") })
+
+	fresh, err := start.Execute(ctx, e.exam.ID, in.StartAttemptCommand{Config: untimedTwo()})
+
+	if err != nil || fresh.ID == old {
+		t.Fatalf("start = %v, err %v; want a new attempt, not a 409 naming the expired %s", fresh.ID, err, old)
+	}
+	if rows := e.inProgressRows(t); len(rows) != 1 || rows[0] != fresh.ID {
+		t.Errorf("in_progress rows = %v, want exactly the new attempt %s", rows, fresh.ID)
+	}
+}
+
+func TestStartsRacingFinalizingReadsAndWritesOfAnExpiredAttemptAlwaysSucceedOverRealPostgres(t *testing.T) { // phase-3 fix 2, unhooked
+	e := newSessionE2E(t)
+	for round := range 8 {
+		old := e.start(t, `{"selection":{"kind":"random","count":3},"timing":{"kind":"timed","minutes":10},"feedback":"end"}`)["id"].(string)
+		e.clock.Advance(11 * time.Minute)
+		var wg sync.WaitGroup
+		var startErr error
+		var fresh domain.AttemptView
+		wg.Add(3)
+		go func() { defer wg.Done(); e.call(t, http.MethodGet, "/api/v1/attempts/"+old, "") }()
+		go func() { defer wg.Done(); e.put(t, old, 0, true) }()
+		go func() {
+			defer wg.Done()
+			fresh, startErr = e.startService(nil).Execute(ctx, e.exam.ID, in.StartAttemptCommand{Config: untimedTwo()})
+		}()
+		wg.Wait()
+
+		if startErr != nil {
+			t.Fatalf("round %d: start = %v; an attempt past its grace never blocks a start", round, startErr)
+		}
+		if rows := e.inProgressRows(t); len(rows) != 1 || rows[0] != fresh.ID {
+			t.Fatalf("round %d: in_progress rows = %v, want exactly %s", round, rows, fresh.ID)
+		}
+		e.call(t, http.MethodPost, "/api/v1/attempts/"+fresh.ID+"/submit", "")
 	}
 }
