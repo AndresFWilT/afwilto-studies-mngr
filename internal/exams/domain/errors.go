@@ -117,3 +117,19 @@ func NewConflict(field, rule, message string) *ConflictError {
 func NewAttemptInProgress(attemptID string) *ConflictError {
 	return NewConflict("attemptId", RuleAttemptInProgress, "attempt "+attemptID+" is in progress")
 }
+
+// NewAttemptClosed is BR-A3: a submitted or expired attempt is immutable.
+func NewAttemptClosed() *ConflictError {
+	return NewConflict("status", RuleAttemptClosed, "the attempt is closed and can no longer change")
+}
+
+// NewAttemptExpired is BR-A2: the write found the attempt past its deadline
+// and its grace period.
+func NewAttemptExpired() *ConflictError {
+	return NewConflict("status", RuleAttemptExpired, "the attempt passed its deadline and was closed as expired")
+}
+
+// NewAnswerLocked is D-13: the answer of a revealed item can no longer change.
+func NewAnswerLocked() *ConflictError {
+	return NewConflict("selected", RuleAnswerLocked, "the answer was revealed and is locked; only the flag can change")
+}
