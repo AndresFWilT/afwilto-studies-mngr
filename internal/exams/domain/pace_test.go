@@ -59,10 +59,10 @@ func TestQuestionPaceWithoutAClassificationIsTheExamPace(t *testing.T) { // FR-8
 
 func TestCeilMinutesAbsorbsFloatNoise(t *testing.T) { // slice 06a §5
 	sum := 0.0
-	for range 3 {
-		sum += 10.0 / 3 // 10.000000000000002 in float64
+	for range 6 {
+		sum += 7.0 / 3 // 14.000000000000002 in float64
 	}
-	if sum == 10 {
+	if sum == 14 {
 		t.Fatal("the fixture no longer produces float noise")
 	}
 	for in, want := range map[float64]int{10 + 1e-12: 10, 10: 10, 10.01: 11, 0: 0, 14.5: 15, 29.999999999999996: 30} {
@@ -70,8 +70,8 @@ func TestCeilMinutesAbsorbsFloatNoise(t *testing.T) { // slice 06a §5
 			t.Errorf("CeilMinutes(%v) = %d, want %d", in, got, want)
 		}
 	}
-	if got := CeilMinutes(sum); got != 10 {
-		t.Errorf("CeilMinutes(3 × 10/3) = %d, want 10", got)
+	if got := CeilMinutes(sum); got != 14 {
+		t.Errorf("CeilMinutes(6 × 7/3) = %d, want 14", got)
 	}
 }
 
