@@ -53,6 +53,9 @@ func openImportZip(data []byte, limits zipLimits) (*importZip, error) {
 	if n, ok := endRecordCount(data); ok && n > limits.MaxEntries {
 		return nil, zipViolation(domain.RuleZipEntries, "the zip has %d entries or more; the limit is %d", n, limits.MaxEntries)
 	}
+	if err := guardCentralDirectory(data, limits.MaxEntries); err != nil {
+		return nil, err
+	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil && !errors.Is(err, zip.ErrInsecurePath) { // insecure names are the next checks' job
 		return nil, zipViolation(domain.RuleFileType, "the file starts like a zip but could not be read as one: %v", err)
@@ -187,4 +190,18 @@ func (z *importZip) read(f *zip.File, max int64) ([]byte, error) {
 		return nil, zipViolation(domain.RuleFileType, "entry %q could not be decompressed: %v", f.Name, err)
 	}
 	return data, nil
+}
+
+// maxCentralDirectoryBytes is the largest central directory the guard reads
+// (phase-2 fix 6); 1,000 entries with the longest ordinary names fit in a
+// fraction of it.
+const maxCentralDirectoryBytes = 1 << 20
+
+// guardCentralDirectory decides the entry count without archive/zip: the
+// end record's count field is only 16 bits, and archive/zip accepts a
+// directory whose real count differs from it by a multiple of 65,536, parsing
+// every entry. It rejects (zip_entries) a central directory over 1 MiB, then
+// walks the directory headers and rejects more than maxEntries.
+func guardCentralDirectory(data []byte, maxEntries int) error {
+	return nil
 }

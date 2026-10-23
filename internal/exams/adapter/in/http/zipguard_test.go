@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -371,5 +372,159 @@ func TestEndRecordCountReadsTheEntryCountWithoutParsingTheDirectory(t *testing.T
 	}
 	if _, ok := endRecordCount([]byte("PK\x03\x04 and no end record")); ok {
 		t.Error("an end record was found in junk")
+	}
+}
+
+// ── phase-2 fix 6: the entry count cannot be bypassed through the 16-bit field ──
+
+// craftedZip is a zip made of central-directory headers only, which is all
+// the guard and archive/zip's NewReader read. recorded is the count the end
+// record claims; the directory really holds n headers.
+func craftedZip(n int, recorded uint16, nameLen, extraLen, commentLen int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < n; i++ {
+		h := make([]byte, 46)
+		binary.LittleEndian.PutUint32(h[0:], 0x02014b50)
+		binary.LittleEndian.PutUint16(h[28:], uint16(nameLen))
+		binary.LittleEndian.PutUint16(h[30:], uint16(extraLen))
+		binary.LittleEndian.PutUint16(h[32:], uint16(commentLen))
+		buf.Write(h)
+		name := fmt.Sprintf("%0*d", nameLen, i)
+		buf.WriteString(name[len(name)-nameLen:])
+		buf.Write(make([]byte, extraLen))
+		buf.WriteString(strings.Repeat("c", commentLen))
+	}
+	cdSize := buf.Len()
+	eocd := make([]byte, 22)
+	binary.LittleEndian.PutUint32(eocd[0:], 0x06054b50)
+	binary.LittleEndian.PutUint16(eocd[8:], recorded)
+	binary.LittleEndian.PutUint16(eocd[10:], recorded)
+	binary.LittleEndian.PutUint32(eocd[12:], uint32(cdSize))
+	binary.LittleEndian.PutUint32(eocd[16:], 0)
+	buf.Write(eocd)
+	return buf.Bytes()
+}
+
+func allocatedBy(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestAnEndRecordCountThatWrapsAroundCannotHideTensOfThousandsOfEntries(t *testing.T) { // fix 6
+	data := craftedZip(65536+500, 500, 6, 0, 0) // the record says 500; the directory holds 66,036 empty entries
+
+	var err error
+	alloc := allocatedBy(func() { _, err = openImportZip(data, defaultZipLimits()) })
+
+	if err == nil || zipRule(t, err) != domain.RuleZipEntries {
+		t.Fatalf("err = %v, want zip_entries", err)
+	}
+	if alloc > 1<<20 {
+		t.Errorf("rejecting it allocated %d bytes: archive/zip parsed the directory (budget 1 MiB)", alloc)
+	}
+}
+
+func TestACentralDirectoryOverOneMebibyteIsZipEntriesWithoutBeingWalked(t *testing.T) { // fix 6
+	data := craftedZip(1000, 1000, 1040, 0, 0) // 1,000 entries of 1,086 bytes: 1,086,000 > 1,048,576
+
+	if err := guardCentralDirectory(data, 1000); err == nil || zipRule(t, err) != domain.RuleZipEntries {
+		t.Errorf("err = %v, want zip_entries for a directory over 1 MiB", err)
+	}
+}
+
+func TestACentralDirectoryUnderTheCapWithTheRealCountAboveTheLimitIsZipEntries(t *testing.T) { // fix 6: the walk, not the record
+	cases := map[string][3]int{ // name, extra, comment lengths: the walk must step over all three
+		"names only":             {10, 0, 0},
+		"names and extra fields": {10, 12, 0},
+		"names and comments":     {10, 0, 30},
+		"all three":              {7, 5, 9},
+	}
+	for name, lens := range cases {
+		data := craftedZip(1500, 500, lens[0], lens[1], lens[2]) // the record says 500: it passes the count check
+
+		err := guardCentralDirectory(data, 1000)
+
+		if err == nil || zipRule(t, err) != domain.RuleZipEntries {
+			t.Errorf("%s: err = %v, want zip_entries (1,500 real headers)", name, err)
+		}
+	}
+}
+
+func TestADirectoryWithExactlyTheLimitOfEntriesPassesTheGuard(t *testing.T) { // fix 6 boundary
+	for name, data := range map[string][]byte{
+		"1,000 short names":                  craftedZip(1000, 1000, 10, 0, 0),
+		"1,000 entries with every field set": craftedZip(1000, 1000, 200, 20, 40),
+		"empty archive":                      craftedZip(0, 0, 0, 0, 0),
+	} {
+		if err := guardCentralDirectory(data, 1000); err != nil {
+			t.Errorf("%s: %v, want accepted", name, err)
+		}
+	}
+}
+
+func TestTheGuardLeavesRealZipsAndDamagedOnesToArchiveZip(t *testing.T) { // fix 6: no false rejections
+	real := buildZip(t, questionsEntry(), zent{name: "img/a.png", data: []byte("x")})
+
+	for name, data := range map[string][]byte{
+		"a real zip":          real,
+		"junk with PK magic":  []byte("PK\x03\x04 and no end record"),
+		"a truncated zip":     real[:len(real)-10],
+		"a zip with a prefix": append([]byte("prefix-bytes-"), real...),
+	} {
+		if err := guardCentralDirectory(data, 1000); err != nil {
+			t.Errorf("%s: guard answered %v; damaged input is archive/zip's to report", name, err)
+		}
+	}
+}
+
+// craftedZip64 hides the real directory behind zip64 records: the classic end
+// record claims 500 entries and a tiny directory at the marker offset
+// 0xFFFFFFFF, so archive/zip reads the 64-bit values instead.
+func craftedZip64(n int) []byte {
+	classic := craftedZip(n, 500, 6, 0, 0)
+	cd := classic[:len(classic)-22]
+	var buf bytes.Buffer
+	buf.Write(cd)
+	zip64Pos := buf.Len()
+	rec := make([]byte, 56)
+	binary.LittleEndian.PutUint32(rec[0:], 0x06064b50)
+	binary.LittleEndian.PutUint64(rec[4:], 44)
+	binary.LittleEndian.PutUint64(rec[24:], uint64(n))
+	binary.LittleEndian.PutUint64(rec[32:], uint64(n))
+	binary.LittleEndian.PutUint64(rec[40:], uint64(len(cd)))
+	binary.LittleEndian.PutUint64(rec[48:], 0)
+	buf.Write(rec)
+	loc := make([]byte, 20)
+	binary.LittleEndian.PutUint32(loc[0:], 0x07064b50)
+	binary.LittleEndian.PutUint64(loc[8:], uint64(zip64Pos))
+	binary.LittleEndian.PutUint32(loc[16:], 1)
+	buf.Write(loc)
+	eocd := make([]byte, 22)
+	binary.LittleEndian.PutUint32(eocd[0:], 0x06054b50)
+	binary.LittleEndian.PutUint16(eocd[8:], 500)
+	binary.LittleEndian.PutUint16(eocd[10:], 500)
+	binary.LittleEndian.PutUint32(eocd[12:], 100)
+	binary.LittleEndian.PutUint32(eocd[16:], 0xFFFFFFFF)
+	buf.Write(eocd)
+	return buf.Bytes()
+}
+
+func TestZip64RecordsCannotHideTheRealDirectoryFromTheGuard(t *testing.T) { // fix 6: archive/zip trusts the 64-bit values when the offset is the marker
+	for name, n := range map[string]int{"3,000 entries in a small directory": 3000, "30,000 entries in a 1.4 MiB directory": 30000} {
+		data := craftedZip64(n)
+
+		var err error
+		alloc := allocatedBy(func() { _, err = openImportZip(data, defaultZipLimits()) })
+
+		if err == nil || zipRule(t, err) != domain.RuleZipEntries {
+			t.Errorf("%s: err = %v, want zip_entries", name, err)
+		}
+		if alloc > 1<<20 {
+			t.Errorf("%s: rejecting it allocated %d bytes: archive/zip parsed the directory", name, alloc)
+		}
 	}
 }
