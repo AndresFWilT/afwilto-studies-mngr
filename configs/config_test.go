@@ -76,3 +76,39 @@ func TestMigrateOnStartAcceptsBoolSpellings(t *testing.T) {
 		})
 	}
 }
+
+const defaultImportLimit = 53477376 // 51 MiB: a 50 MiB zip plus multipart overhead
+
+func TestLoadImportLimitDefaultsTo51MiB(t *testing.T) { // S01-6
+	t.Setenv("MAX_IMPORT_BYTES", "")
+
+	if got := Load().MaxImportBytes; got != defaultImportLimit {
+		t.Errorf("MaxImportBytes = %d, want %d", got, defaultImportLimit)
+	}
+}
+
+func TestLoadImportLimitCanBeOverridden(t *testing.T) { // S01-6
+	t.Setenv("MAX_IMPORT_BYTES", "2048")
+
+	if got := Load().MaxImportBytes; got != 2048 {
+		t.Errorf("MaxImportBytes = %d, want 2048", got)
+	}
+}
+
+func TestLoadIgnoresMalformedImportLimit(t *testing.T) { // S01-6
+	t.Setenv("MAX_IMPORT_BYTES", "huge")
+
+	if got := Load().MaxImportBytes; got != defaultImportLimit {
+		t.Errorf("MaxImportBytes = %d, want default %d on malformed input", got, defaultImportLimit)
+	}
+}
+
+func TestImportLimitIsIndependentOfBodyLimit(t *testing.T) { // S01-6
+	t.Setenv("MAX_BODY_BYTES", "2048")
+	t.Setenv("MAX_IMPORT_BYTES", "")
+
+	cfg := Load()
+	if cfg.MaxBodyBytes != 2048 || cfg.MaxImportBytes != defaultImportLimit {
+		t.Errorf("MaxBodyBytes = %d, MaxImportBytes = %d; want 2048 and %d", cfg.MaxBodyBytes, cfg.MaxImportBytes, defaultImportLimit)
+	}
+}

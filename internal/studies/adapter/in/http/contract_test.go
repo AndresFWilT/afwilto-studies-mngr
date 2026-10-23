@@ -86,7 +86,7 @@ func contractViolation(t *testing.T, method, path string, rec *httptest.Response
 	return openapi3filter.ValidateResponse(context.Background(), input)
 }
 
-// Every endpoint of Spec 16 §7 must be documented from v0.1.0 on, so slices
+// Every endpoint of Spec 16 §7 must stay documented from v0.1.0 on, so slices
 // 02–06 implement against a fixed contract instead of growing it ad hoc.
 func TestContractDocumentsEveryEndpoint(t *testing.T) {
 	doc, _ := loadContract(t)
@@ -124,8 +124,8 @@ func TestContractDocumentsEveryEndpoint(t *testing.T) {
 			t.Errorf("contract is missing %s", endpoint)
 		}
 	}
-	if got := doc.Info.Version; got != "0.1.0" {
-		t.Errorf("info.version = %q, want 0.1.0", got)
+	if got := doc.Info.Version; got != "0.2.0" {
+		t.Errorf("info.version = %q, want 0.2.0", got)
 	}
 }
 

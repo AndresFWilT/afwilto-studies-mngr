@@ -13,6 +13,7 @@ type Config struct {
 	DatabaseURL    string
 	AllowOrigins   []string
 	MaxBodyBytes   int64
+	MaxImportBytes int64
 	MigrateOnStart bool
 }
 
