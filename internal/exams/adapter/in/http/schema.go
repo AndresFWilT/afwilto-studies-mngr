@@ -66,6 +66,9 @@ func (r *QuestionFileReader) Read(data []byte) (*domain.QuestionFile, []domain.I
 	if err != nil {
 		return nil, []domain.ImportError{jsonError(describeParseError(err))}
 	}
+	if errs := questionsOverTheLimit(instance); errs != nil {
+		return nil, errs
+	}
 	if err := r.schema.Validate(instance); err != nil {
 		var invalid *jsonschema.ValidationError
 		if errors.As(err, &invalid) {
@@ -79,6 +82,28 @@ func (r *QuestionFileReader) Read(data []byte) (*domain.QuestionFile, []domain.I
 		return nil, []domain.ImportError{{Path: "$", Rule: domain.RuleSchema, Message: "the file could not be read: " + err.Error()}}
 	}
 	return dto.toDomain(), nil
+}
+
+// maxQuestions is the schema's maxItems for `questions` (FR-2). It is checked
+// before the schema runs: an array of millions of empty questions would
+// otherwise make the validator build millions of errors.
+const maxQuestions = 2000
+
+func questionsOverTheLimit(instance any) []domain.ImportError {
+	doc, ok := instance.(map[string]any)
+	if !ok {
+		return nil
+	}
+	questions, ok := doc["questions"].([]any)
+	if !ok || len(questions) <= maxQuestions {
+		return nil
+	}
+	return []domain.ImportError{{Path: "questions", Rule: domain.RuleSchema,
+		Message: maxItemsMessage(len(questions))}}
+}
+
+func maxItemsMessage(n int) string {
+	return message.NewPrinter(language.English).Sprintf("maxItems: got %d, want %d", n, maxQuestions)
 }
 
 func jsonError(msg string) domain.ImportError {

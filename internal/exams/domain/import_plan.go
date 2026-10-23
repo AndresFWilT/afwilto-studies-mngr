@@ -146,6 +146,10 @@ func sortByQuestion(errs []ImportError) {
 	})
 }
 
+// MaxReportErrors bounds the errors one report carries, so a file that is
+// wrong everywhere cannot produce a response of millions of entries.
+const MaxReportErrors = 200
+
 func failure(errs []ImportError, media MediaReport) ImportPlan {
 	invalid := map[int]bool{}
 	for _, e := range errs {
@@ -153,11 +157,13 @@ func failure(errs []ImportError, media MediaReport) ImportPlan {
 			invalid[i] = true
 		}
 	}
-	return ImportPlan{Report: ImportReport{
-		Counts: ImportCounts{Invalid: len(invalid)},
-		Errors: errs,
-		Media:  media,
-	}}
+	report := ImportReport{Counts: ImportCounts{Invalid: len(invalid)}, Media: media}
+	if len(errs) > MaxReportErrors {
+		report.Warnings = []string{fmt.Sprintf("%d more errors not shown", len(errs)-MaxReportErrors)}
+		errs = errs[:MaxReportErrors]
+	}
+	report.Errors = errs
+	return ImportPlan{Report: report}
 }
 
 // PlanImport runs the semantic stages (3: BR-Q1/Q2/Q3, BR-C1, BR-C2; 4: media)

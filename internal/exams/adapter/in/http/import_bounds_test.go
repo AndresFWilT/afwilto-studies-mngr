@@ -31,7 +31,7 @@ func TestMoreThanTwoThousandQuestionsIsOneMaxItemsErrorAndTheSchemaIsSkipped(t *
 		t.Fatalf("errors = %d, want exactly 1 (not one per missing field of 5000 questions): first %+v", len(errs), errs[0])
 	}
 	got := errs[0]
-	if got.Path != "questions" || got.Rule != "schema" || !strings.Contains(got.Message, "2000") || !strings.Contains(got.Message, "5000") {
+	if got.Path != "questions" || got.Rule != "schema" || !strings.Contains(got.Message, "maxItems") || !strings.Contains(got.Message, "2,000") || !strings.Contains(got.Message, "5,000") {
 		t.Errorf("error = %+v, want path questions, rule schema, a message naming the 2000 limit and the 5000 found", got)
 	}
 }
