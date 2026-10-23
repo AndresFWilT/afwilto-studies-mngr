@@ -49,6 +49,23 @@ func (r *QuestionBankRepository) ApplyEdit(ctx context.Context, examID string, p
 	return tx.Commit(ctx)
 }
 
+// editFieldError tags a statement's error with the request field that statement
+// writes, so the invalid_text backstop can name it.
+type editFieldError struct {
+	field string
+	err   error
+}
+
+func (e *editFieldError) Error() string { return e.err.Error() }
+func (e *editFieldError) Unwrap() error { return e.err }
+
+func inField(field string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &editFieldError{field: field, err: err}
+}
+
 // editWriteError maps the unique name indexes (migrations 0009 and 0010) and
 // text the database refuses (SQLSTATE 22021, 22P05).
 func editWriteError(err error) error {
@@ -57,8 +74,13 @@ func editWriteError(err error) error {
 		return err
 	}
 	if pgErr.Code == invalidByteSequence || pgErr.Code == untranslatableCharacter { // phase-2 fix 5: backstop, the domain answers `format` first
-		return domain.NewValidation(domain.Violation{Field: "name", Rule: domain.RuleInvalidText,
-			Message: "a name contains a character the database cannot store (U+0000)"})
+		field := "body" // the statement is not known to write a single field
+		var tagged *editFieldError
+		if errors.As(err, &tagged) {
+			field = tagged.field
+		}
+		return domain.NewValidation(domain.Violation{Field: field, Rule: domain.RuleInvalidText,
+			Message: "the text contains a character the database cannot store (U+0000)"})
 	}
 	if pgErr.Code != uniqueViolation {
 		return err
@@ -89,7 +111,7 @@ func writeEdit(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.EditWr
 			WHERE id = $1 AND version = $2 AND deleted_at IS NULL`,
 			w.Exam.ID, w.ExpectedVersion, w.Exam.Name.String(), w.Exam.QuestionCount, w.Exam.TimeLimitMin, w.Exam.PassPercent, w.Exam.Version, w.Exam.UpdatedAt)
 		if err != nil {
-			return err
+			return inField("name", err)
 		}
 		if n == 0 {
 			return domain.NewConflict("version", domain.RuleStaleVersion, "the exam was changed since you read it; reload and re-apply your edit")
@@ -122,7 +144,7 @@ func writeEdit(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.EditWr
 		n, err := run(`UPDATE exam_classifications SET name = $2, fold_name = $3, position = $4, weight_mode = $5
 			WHERE id = $1 AND exam_id = $6 AND deleted_at IS NULL`, c.ID, c.Name, c.Fold, c.Position, string(c.WeightMode), w.ExamID)
 		if err != nil {
-			return err
+			return inField("classifications", err)
 		}
 		if n == 0 {
 			return domain.ErrNotFound
@@ -134,7 +156,7 @@ func writeEdit(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.EditWr
 			  AND classification_id IN (SELECT id FROM exam_classifications WHERE exam_id = $7 AND deleted_at IS NULL)`,
 			k.ID, k.Key, k.Name, k.Fold, k.PaceQuestions, k.PaceMinutes, w.ExamID)
 		if err != nil {
-			return err
+			return inField("categories", err)
 		}
 		if n == 0 {
 			return domain.ErrNotFound
