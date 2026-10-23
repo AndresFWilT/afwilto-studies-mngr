@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"regexp"
 	"slices"
 	"sort"
@@ -81,7 +82,11 @@ func (r *QuestionFileReader) Read(data []byte) (*domain.QuestionFile, []domain.I
 	if err := json.Unmarshal(data, &dto); err != nil { // the schema passed, so this is a bug, not bad input
 		return nil, []domain.ImportError{{Path: "$", Rule: domain.RuleSchema, Message: "the file could not be read: " + err.Error()}}
 	}
-	return dto.toDomain(), nil
+	file, errs := dto.toDomain()
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return file, nil
 }
 
 // maxQuestions is the schema's maxItems for `questions` (FR-2). It is checked
@@ -257,9 +262,9 @@ type optionDTO struct {
 }
 
 type originDTO struct {
-	Set     string `json:"set"`
-	Number  int    `json:"number"`
-	NoteRef string `json:"noteRef"`
+	Set     string      `json:"set"`
+	Number  json.Number `json:"number"` // 1.0 and 1e3 are integers to the schema, so they are to the decoder
+	NoteRef string      `json:"noteRef"`
 }
 
 type fileQuestionDTO struct {
@@ -306,7 +311,24 @@ func (s *sourceDTO) toDomain() *domain.Source {
 	return &domain.Source{Kind: s.Kind, Name: s.Name}
 }
 
-func (dto fileDTO) toDomain() *domain.QuestionFile {
+// integerValue reads a JSON number the schema accepted as an integer, in any
+// spelling (7, 1.0, 1e3). ok is false when it does not fit an int.
+func integerValue(n json.Number) (value int, ok bool) {
+	if n == "" {
+		return 0, true
+	}
+	if v, err := strconv.ParseInt(string(n), 10, 64); err == nil {
+		return int(v), true
+	}
+	r, exact := new(big.Rat).SetString(string(n))
+	if !exact || !r.IsInt() || !r.Num().IsInt64() {
+		return 0, false
+	}
+	return int(r.Num().Int64()), true
+}
+
+func (dto fileDTO) toDomain() (*domain.QuestionFile, []domain.ImportError) {
+	var errs []domain.ImportError
 	file := &domain.QuestionFile{Source: dto.Source.toDomain(), Questions: make([]domain.FileQuestion, len(dto.Questions))}
 	for i, q := range dto.Questions {
 		fq := domain.FileQuestion{
@@ -318,9 +340,14 @@ func (dto fileDTO) toDomain() *domain.QuestionFile {
 			fq.Options = append(fq.Options, domain.Option{Text: o.Text, Image: o.Image, Alt: o.Alt, Correct: o.Correct, Rationale: o.Rationale})
 		}
 		if q.Origin != nil {
-			fq.Origin = &domain.Origin{Set: q.Origin.Set, Number: q.Origin.Number, NoteRef: q.Origin.NoteRef}
+			number, ok := integerValue(q.Origin.Number)
+			if !ok {
+				errs = append(errs, domain.ImportError{Path: fmt.Sprintf("questions[%d].origin.number", i), Rule: domain.RuleSchema,
+					Message: fmt.Sprintf("origin.number must be a whole number that fits in 64 bits, got %s", q.Origin.Number)})
+			}
+			fq.Origin = &domain.Origin{Set: q.Origin.Set, Number: number, NoteRef: q.Origin.NoteRef}
 		}
 		file.Questions[i] = fq
 	}
-	return file
+	return file, errs
 }
