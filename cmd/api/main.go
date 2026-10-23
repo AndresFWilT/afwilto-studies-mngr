@@ -14,6 +14,8 @@ import (
 
 	"github.com/afwilto/studies-mngr/configs"
 	examshttp "github.com/afwilto/studies-mngr/internal/exams/adapter/in/http"
+	examspostgres "github.com/afwilto/studies-mngr/internal/exams/adapter/out/postgres"
+	examsusecase "github.com/afwilto/studies-mngr/internal/exams/app/usecase"
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	studieshttp "github.com/afwilto/studies-mngr/internal/studies/adapter/in/http"
 	"github.com/afwilto/studies-mngr/internal/studies/adapter/out/postgres"
@@ -83,7 +85,16 @@ func main() {
 		RenameNoteKind: usecase.NewRenameNoteKindService(noteKinds, clock),
 		DeleteNoteKind: usecase.NewDeleteNoteKindService(noteKinds, notes, clock),
 	}
-	examDeps := examshttp.Deps{}
+
+	examRepo := examspostgres.NewExamRepository(pool)
+	examSubjects := examspostgres.NewSubjectDirectory(pool)
+	examDeps := examshttp.Deps{
+		CreateExam:       examsusecase.NewCreateExamService(examRepo, examSubjects, clock, ids),
+		ListSubjectExams: examsusecase.NewListSubjectExamsService(examRepo, examSubjects),
+		GetExam:          examsusecase.NewGetExamService(examRepo),
+		UpdateExam:       examsusecase.NewUpdateExamService(examRepo, clock),
+		DeleteExam:       examsusecase.NewDeleteExamService(examRepo, clock),
+	}
 
 	router := httpx.NewServer(httpx.Config{
 		AllowOrigins: cfg.AllowOrigins,

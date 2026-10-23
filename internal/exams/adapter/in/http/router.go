@@ -10,8 +10,8 @@ import (
 // route with its own body cap (MAX_IMPORT_BYTES).
 const ImportPattern = "POST /api/v1/exams/{id}/questions/import"
 
-// Deps carries what the exams HTTP adapter needs; use-case ports arrive with
-// the slices that implement them.
+// Deps carries what the exams HTTP adapter needs, injected from the
+// composition root; use-case ports arrive with the slices that implement them.
 type Deps struct {
 	CreateExam       in.CreateExam
 	ListSubjectExams in.ListSubjectExams
@@ -20,11 +20,17 @@ type Deps struct {
 	DeleteExam       in.DeleteExam
 }
 
-// Register adds the exams routes to the shared mux. Slice 01 registers none:
-// the endpoints are documented in the contract but answer the JSON 404 until
-// slices 02–06b implement them.
-func Register(Deps) func(*http.ServeMux) {
-	return func(*http.ServeMux) {}
+// Register adds the exams routes to the shared mux. Slice 02 registers the
+// exams CRUD; the other documented endpoints answer the JSON 404 until slices
+// 03–06b implement them.
+func Register(deps Deps) func(*http.ServeMux) {
+	return func(mux *http.ServeMux) {
+		mux.HandleFunc("GET /api/v1/subjects/{id}/exams", handleListSubjectExams(deps.ListSubjectExams))
+		mux.HandleFunc("POST /api/v1/subjects/{id}/exams", handleCreateExam(deps.CreateExam))
+		mux.HandleFunc("GET /api/v1/exams/{id}", handleGetExam(deps.GetExam))
+		mux.HandleFunc("PATCH /api/v1/exams/{id}", handleUpdateExam(deps.UpdateExam))
+		mux.HandleFunc("DELETE /api/v1/exams/{id}", handleDeleteExam(deps.DeleteExam))
+	}
 }
 
 // BodyLimits maps the import route to its own body cap, for httpx.Config.
