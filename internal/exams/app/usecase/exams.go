@@ -83,11 +83,12 @@ func (s *listSubjectExamsService) Execute(ctx context.Context, subjectID string)
 
 type updateExamService struct {
 	repo  out.ExamRepository
+	bank  out.QuestionBank
 	clock out.Clock
 }
 
-func NewUpdateExamService(repo out.ExamRepository, clock out.Clock) in.UpdateExam {
-	return &updateExamService{repo: repo, clock: clock}
+func NewUpdateExamService(repo out.ExamRepository, bank out.QuestionBank, clock out.Clock) in.UpdateExam {
+	return &updateExamService{repo: repo, bank: bank, clock: clock}
 }
 
 func (s *updateExamService) Execute(ctx context.Context, id string, cmd in.UpdateExamCommand) (domain.ExamSummary, error) {

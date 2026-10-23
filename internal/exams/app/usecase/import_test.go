@@ -14,7 +14,6 @@ import (
 
 type importEnv struct {
 	env
-	bank   *testsupport.FakeQuestionBank
 	imp    in.ImportQuestions
 	examID string
 }
@@ -22,12 +21,12 @@ type importEnv struct {
 func newImportEnv(t *testing.T) importEnv {
 	t.Helper()
 	e := newEnv()
-	bank := testsupport.NewFakeQuestionBank(e.repo)
+	bank := e.bank
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{N: 1000}
 	exam := e.add(t, subjectA, "SAA-C03")
 	// the delete service must see the bank, exactly as the SQL repository does
-	return importEnv{env: e, bank: bank, imp: NewImportQuestionsService(bank, clock, ids), examID: exam.ID}
+	return importEnv{env: e, imp: NewImportQuestionsService(bank, clock, ids), examID: exam.ID}
 }
 
 func cn(classification string, names ...string) domain.ClassifiedNames {

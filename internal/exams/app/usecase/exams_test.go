@@ -20,6 +20,7 @@ const (
 
 type env struct {
 	repo     *testsupport.FakeExamRepo
+	bank     *testsupport.FakeQuestionBank
 	subjects *testsupport.FakeSubjectDirectory
 	create   in.CreateExam
 	get      in.GetExam
@@ -31,14 +32,15 @@ type env struct {
 func newEnv() env {
 	subjects := testsupport.NewFakeSubjectDirectory(subjectA, subjectB) // deadSub is not alive
 	repo := testsupport.NewFakeExamRepo(subjects)
+	bank := testsupport.NewFakeQuestionBank(repo)
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return env{
-		repo: repo, subjects: subjects,
+		repo: repo, bank: bank, subjects: subjects,
 		create: NewCreateExamService(repo, subjects, clock, ids),
 		get:    NewGetExamService(repo),
 		list:   NewListSubjectExamsService(repo, subjects),
-		update: NewUpdateExamService(repo, clock),
+		update: NewUpdateExamService(repo, bank, clock),
 		delete: NewDeleteExamService(repo, clock),
 	}
 }

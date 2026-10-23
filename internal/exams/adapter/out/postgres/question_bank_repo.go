@@ -361,3 +361,15 @@ func alivePairs(bank domain.Bank) map[string]map[string]bool {
 	}
 	return out
 }
+
+func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID string, filter domain.QuestionFilter) ([]domain.QuestionSummary, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (domain.Question, error) {
+	return domain.Question{}, errors.New("not implemented")
+}
+
+func (r *QuestionBankRepository) ApplyEdit(ctx context.Context, examID string, plan func(domain.Exam, domain.Bank) (*domain.EditWrite, error)) error {
+	return errors.New("not implemented")
+}

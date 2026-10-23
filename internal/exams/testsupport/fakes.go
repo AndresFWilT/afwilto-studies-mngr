@@ -7,7 +7,9 @@ package testsupport
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -176,8 +178,10 @@ type FakeQuestionBank struct {
 	mu    sync.Mutex
 	exams *FakeExamRepo
 	banks map[string]domain.Bank
-	// Applied counts the writes that were persisted.
+	// Applied counts the import writes that were persisted, Edits the exam
+	// edits, merges and question deletes.
 	Applied int
+	Edits   int
 }
 
 // NewFakeQuestionBank wires the bank to the exam repository, which then reads
@@ -223,4 +227,230 @@ func (b *FakeQuestionBank) ApplyImport(ctx context.Context, examID string, plan 
 	b.banks[examID] = current.After(*write)
 	b.Applied++
 	return nil
+}
+
+// ── slice 04: browser, single reads and edits ──────────────────────────────
+
+// ListQuestions filters and sorts like the SQL adapter: origin set, origin
+// number, key (byte order), questions without a set or number last.
+func (b *FakeQuestionBank) ListQuestions(ctx context.Context, examID string, f domain.QuestionFilter) ([]domain.QuestionSummary, error) {
+	if _, err := b.exams.Get(ctx, examID); err != nil {
+		return nil, err
+	}
+	bank := b.Bank(examID)
+
+	var categoryName, categoryClass string
+	for _, c := range bank.Classifications {
+		for _, k := range c.Categories {
+			if k.ID == f.CategoryID {
+				categoryName, categoryClass = k.Name, c.Name
+			}
+		}
+	}
+	primary := ""
+	for _, c := range bank.Classifications {
+		if c.IsPrimary() {
+			primary = c.Name
+		}
+	}
+	has := func(q domain.Question, class, name string) bool {
+		for _, ref := range q.Categories {
+			if domain.Fold(ref.Classification) == domain.Fold(class) && domain.Fold(ref.Category) == domain.Fold(name) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var rows []domain.Question
+	for _, q := range bank.Questions {
+		switch {
+		case f.CategoryID != "" && !has(q, categoryClass, categoryName):
+			continue
+		case f.Origin != "" && (q.Origin == nil || q.Origin.Set != f.Origin):
+			continue
+		case f.Difficulty != "" && q.Difficulty != f.Difficulty:
+			continue
+		case f.Text != "" && !strings.Contains(strings.ToLower(q.Stem), strings.ToLower(f.Text)):
+			continue
+		}
+		if f.Unclassified {
+			classified := false
+			for _, ref := range q.Categories {
+				if primary != "" && domain.Fold(ref.Classification) == domain.Fold(primary) {
+					classified = true
+				}
+			}
+			if classified {
+				continue
+			}
+		}
+		rows = append(rows, q)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, c := rows[i], rows[j]
+		as, cs := originSet(a), originSet(c)
+		if (as == nil) != (cs == nil) {
+			return cs == nil
+		}
+		if as != nil && *as != *cs {
+			return *as < *cs
+		}
+		an, cn := originNumber(a), originNumber(c)
+		if (an == 0) != (cn == 0) {
+			return cn == 0
+		}
+		if an != cn {
+			return an < cn
+		}
+		return a.Key < c.Key
+	})
+	out := make([]domain.QuestionSummary, len(rows))
+	for i, q := range rows {
+		out[i] = domain.SummarizeQuestion(q)
+	}
+	return out, nil
+}
+
+func originSet(q domain.Question) *string {
+	if q.Origin == nil || q.Origin.Set == "" {
+		return nil
+	}
+	return &q.Origin.Set
+}
+
+func originNumber(q domain.Question) int {
+	if q.Origin == nil {
+		return 0
+	}
+	return q.Origin.Number
+}
+
+func (b *FakeQuestionBank) GetQuestion(ctx context.Context, id string) (domain.Question, error) {
+	b.mu.Lock()
+	var examID string
+	for exam, bank := range b.banks {
+		for _, q := range bank.Questions {
+			if q.ID == id {
+				examID = exam
+			}
+		}
+	}
+	b.mu.Unlock()
+	if examID == "" {
+		return domain.Question{}, domain.ErrNotFound
+	}
+	if _, err := b.exams.Get(ctx, examID); err != nil {
+		return domain.Question{}, err
+	}
+	for _, q := range b.Bank(examID).Questions {
+		if q.ID == id {
+			return q, nil
+		}
+	}
+	return domain.Question{}, domain.ErrNotFound
+}
+
+// ApplyEdit mirrors the SQL adapter: the plan sees the exam row and the bank,
+// and the write lands as a whole or not at all.
+func (b *FakeQuestionBank) ApplyEdit(ctx context.Context, examID string, plan func(domain.Exam, domain.Bank) (*domain.EditWrite, error)) error {
+	exam, err := b.exams.Get(ctx, examID)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current := b.banks[examID]
+	write, err := plan(exam, current.After(domain.ImportWrite{}))
+	if err != nil || write == nil {
+		return err
+	}
+	if write.Exam != nil {
+		if exam.Version != write.ExpectedVersion {
+			return domain.NewConflict("version", domain.RuleStaleVersion, "the exam was changed since you read it")
+		}
+		if b.exams.nameClash(*write.Exam) {
+			return duplicateName()
+		}
+		b.exams.Rows[examID] = *write.Exam
+	}
+	next := current.After(domain.ImportWrite{})
+	applyEdit(&next, *write)
+	b.banks[examID] = next
+	b.Edits++
+	return nil
+}
+
+// applyEdit changes the stored bank like the SQL statements do. Questions hold
+// category references by name here, so they are resolved to ids before the
+// structure changes and written back with the new names after it.
+func applyEdit(bank *domain.Bank, w domain.EditWrite) {
+	type pair struct{ class, cat string }
+	byName := map[pair]string{}
+	for _, c := range bank.Classifications {
+		for _, k := range c.Categories {
+			byName[pair{domain.Fold(c.Name), domain.Fold(k.Name)}] = k.ID
+		}
+	}
+	linked := make([][]string, len(bank.Questions))
+	for i, q := range bank.Questions {
+		seen := map[string]bool{}
+		for _, ref := range q.Categories {
+			id := byName[pair{domain.Fold(ref.Classification), domain.Fold(ref.Category)}]
+			if w.Merge != nil && id == w.Merge.From {
+				id = w.Merge.Into
+			}
+			if id != "" && !seen[id] {
+				seen[id] = true
+				linked[i] = append(linked[i], id)
+			}
+		}
+	}
+
+	for _, changed := range w.Classifications {
+		for i := range bank.Classifications {
+			if bank.Classifications[i].ID == changed.ID {
+				c := &bank.Classifications[i]
+				c.Name, c.Fold, c.Position, c.WeightMode = changed.Name, changed.Fold, changed.Position, changed.WeightMode
+			}
+		}
+	}
+	for i := range bank.Classifications {
+		c := &bank.Classifications[i]
+		if w.Merge != nil && c.ID == w.Merge.ClassificationID {
+			c.Categories = slices.DeleteFunc(c.Categories, func(k domain.Category) bool { return k.ID == w.Merge.From })
+		}
+		for j := range c.Categories {
+			k := &c.Categories[j]
+			for _, changed := range w.Categories {
+				if changed.ID == k.ID {
+					k.Name, k.Key, k.Fold, k.PaceQuestions, k.PaceMinutes = changed.Name, changed.Key, changed.Fold, changed.PaceQuestions, changed.PaceMinutes
+				}
+			}
+			for _, cw := range w.Weights {
+				if cw.CategoryID == k.ID {
+					k.WeightPercent = cw.Percent
+				}
+			}
+		}
+	}
+
+	names := map[string]domain.CategoryRef{}
+	for _, c := range bank.Classifications {
+		for _, k := range c.Categories {
+			names[k.ID] = domain.CategoryRef{Classification: c.Name, Category: k.Name}
+		}
+	}
+	var kept []domain.Question
+	for i, q := range bank.Questions {
+		if q.ID == w.DeleteQuestionID && w.DeleteQuestionID != "" {
+			continue
+		}
+		q.Categories = nil
+		for _, id := range linked[i] {
+			q.Categories = append(q.Categories, names[id])
+		}
+		kept = append(kept, q)
+	}
+	bank.Questions = kept
 }

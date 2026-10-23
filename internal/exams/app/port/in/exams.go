@@ -31,10 +31,13 @@ type ListSubjectExams interface {
 }
 
 // UpdateExamCommand: Version is the version the client read; Edit holds the
-// fields to change (nil means unchanged) and must set at least one.
+// fields to change (nil means unchanged) and Structure the classification and
+// category edits (slice 04). At least one of them must change something. All
+// of it is applied atomically.
 type UpdateExamCommand struct {
-	Version int
-	Edit    domain.ExamEdit
+	Version   int
+	Edit      domain.ExamEdit
+	Structure domain.StructureEdit
 }
 
 type UpdateExam interface {

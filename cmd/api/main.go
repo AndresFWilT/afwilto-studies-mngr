@@ -98,7 +98,7 @@ func main() {
 		CreateExam:       examsusecase.NewCreateExamService(examRepo, examSubjects, clock, ids),
 		ListSubjectExams: examsusecase.NewListSubjectExamsService(examRepo, examSubjects),
 		GetExam:          examsusecase.NewGetExamService(examRepo),
-		UpdateExam:       examsusecase.NewUpdateExamService(examRepo, clock),
+		UpdateExam:       examsusecase.NewUpdateExamService(examRepo, questionBank, clock),
 		DeleteExam:       examsusecase.NewDeleteExamService(examRepo, clock),
 		ImportQuestions:  examsusecase.NewImportQuestionsService(questionBank, clock, ids),
 		FileReader:       questionFiles,

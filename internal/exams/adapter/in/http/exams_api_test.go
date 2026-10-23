@@ -29,13 +29,14 @@ type apiEnv struct {
 func newAPIEnv() apiEnv {
 	subjects := testsupport.NewFakeSubjectDirectory(subjectA, subjectB)
 	repo := testsupport.NewFakeExamRepo(subjects)
+	bank := testsupport.NewFakeQuestionBank(repo)
 	clock := &testsupport.StepClock{}
 	ids := &testsupport.SeqIDGen{}
 	return apiEnv{router: httpx.NewServer(httpx.Config{MaxBodyBytes: testMaxBodyBytes}, Register(Deps{
 		CreateExam:       usecase.NewCreateExamService(repo, subjects, clock, ids),
 		ListSubjectExams: usecase.NewListSubjectExamsService(repo, subjects),
 		GetExam:          usecase.NewGetExamService(repo),
-		UpdateExam:       usecase.NewUpdateExamService(repo, clock),
+		UpdateExam:       usecase.NewUpdateExamService(repo, bank, clock),
 		DeleteExam:       usecase.NewDeleteExamService(repo, clock),
 	}))}
 }

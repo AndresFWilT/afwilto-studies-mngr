@@ -36,7 +36,7 @@ func newImportAPIEnv(t *testing.T, cap int64) importEnv {
 		CreateExam:       usecase.NewCreateExamService(repo, subjects, clock, ids),
 		ListSubjectExams: usecase.NewListSubjectExamsService(repo, subjects),
 		GetExam:          usecase.NewGetExamService(repo),
-		UpdateExam:       usecase.NewUpdateExamService(repo, clock),
+		UpdateExam:       usecase.NewUpdateExamService(repo, bank, clock),
 		DeleteExam:       usecase.NewDeleteExamService(repo, clock),
 		ImportQuestions:  usecase.NewImportQuestionsService(bank, clock, ids),
 		FileReader:       sharedReader(t),
