@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -374,7 +375,10 @@ func TestPlanExamEditSwapsThePrimaryAndResetsTheWeightsToInferred(t *testing.T) 
 }
 
 func TestPlanExamEditSwapDemotesBeforePromotingSoThePrimaryIsNeverTwo(t *testing.T) {
-	w := mustPlanEdit(t, bkBank(), ExamEdit{}, StructureEdit{PrimaryID: "cl-svc"})
+	bank := bkBank()
+	slices.Reverse(bank.Classifications) // the classification to promote comes first in creation order
+
+	w := mustPlanEdit(t, bank, ExamEdit{}, StructureEdit{PrimaryID: "cl-svc"})
 
 	if len(w.Classifications) != 2 || w.Classifications[0].Position != PositionSecondary || w.Classifications[1].Position != PositionPrimary {
 		t.Errorf("classification order = %+v, want the demotion first", w.Classifications)
@@ -408,7 +412,7 @@ func TestPlanExamEditListsAtMost10OffendingQuestionKeys(t *testing.T) { // S04-8
 			listed++
 		}
 	}
-	if listed != 10 || !strings.Contains(v.Message, "dup-01") || !strings.Contains(v.Message, "dup-10") || strings.Contains(v.Message, "dup-11") {
+	if listed != 10 || !strings.Contains(v.Message, "dup-01") || !strings.Contains(v.Message, "dup-10") || strings.Contains(v.Message, "dup-11") || !strings.Contains(v.Message, "and 2 more") {
 		t.Errorf("message %q lists %d keys, want the first 10", v.Message, listed)
 	}
 }
