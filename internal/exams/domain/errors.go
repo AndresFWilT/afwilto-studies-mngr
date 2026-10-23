@@ -9,6 +9,11 @@ import (
 // row is invisible to every operation (Spec 16 FR-0).
 var ErrNotFound = errors.New("not found")
 
+// ErrInvalidText is what a bank adapter answers when the database refuses a
+// text value it cannot store (a NUL byte); the import turns it into a 422
+// report instead of a 500.
+var ErrInvalidText = errors.New("text the database cannot store")
+
 type Violation struct {
 	Field   string
 	Rule    string
@@ -60,6 +65,7 @@ const (
 	RulePattern                = "pattern"
 	RuleMediaMissing           = "media_missing"
 	RuleNotFound               = "not_found"
+	RuleInvalidText            = "invalid_text"
 
 	// Slice 04: bank and category editing.
 	RuleWeightsSum = "weights_sum"

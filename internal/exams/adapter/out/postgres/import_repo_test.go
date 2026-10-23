@@ -475,3 +475,28 @@ func TestSecondApplyOfAKeyThatWasLogicallyDeletedRecreatesIt(t *testing.T) {
 		t.Errorf("alive %d total %d, want 1 alive and the old row kept", alive, total)
 	}
 }
+
+func TestAWriteWithATextPostgresCannotStoreIsInvalidTextAndLeavesNoRowBehind(t *testing.T) { // H3: SQLSTATE 22021 (text) and 22P05 (jsonb)
+	for name, mutate := range map[string]func(q *domain.Question){
+		"a NUL in a text column":    func(q *domain.Question) { q.Stem = "bad\x00stem" },
+		"a NUL in the jsonb origin": func(q *domain.Question) { q.Origin = &domain.Origin{NoteRef: "bad\x00ref"} },
+	} {
+		b := newBankEnv(t)
+		before := rowCounts(t)
+		q := domain.Question{ID: uuid.NewString(), ExamID: b.exam.ID, Key: "fresh", Type: domain.QuestionSingle, Stem: "s",
+			Options: []domain.Option{{Text: "a", Correct: true}, {Text: "b"}}, Source: domain.Source{Kind: "own", Name: "x"},
+			Fingerprint: domain.StemFingerprint("s"), Version: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+		mutate(&q)
+
+		err := b.bank.ApplyImport(ctx, b.exam.ID, func(domain.Bank) (*domain.ImportWrite, error) {
+			return &domain.ImportWrite{ExamID: b.exam.ID, Now: time.Now(), Creates: []domain.QuestionWrite{{Question: q}}}, nil
+		})
+
+		if !errors.Is(err, domain.ErrInvalidText) {
+			t.Errorf("%s: err = %v, want domain.ErrInvalidText", name, err)
+		}
+		if after := rowCounts(t); fmt.Sprint(after) != fmt.Sprint(before) {
+			t.Errorf("%s: rows %v -> %v, want nothing written", name, before, after)
+		}
+	}
+}

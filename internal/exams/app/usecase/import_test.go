@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -417,5 +418,30 @@ func TestMalformedCommandWithoutFileOrErrorsIsAProgrammingError(t *testing.T) {
 
 	if err == nil {
 		t.Error("an import without a file and without file errors must fail loudly")
+	}
+}
+
+// refusingBank plans like the real one, then fails the write the way Postgres
+// does for text it cannot store.
+type refusingBank struct{ *testsupport.FakeQuestionBank }
+
+func (b refusingBank) ApplyImport(ctx context.Context, examID string, plan func(domain.Bank) (*domain.ImportWrite, error)) error {
+	if err := b.FakeQuestionBank.ApplyImport(ctx, examID, plan); err != nil {
+		return err
+	}
+	return domain.ErrInvalidText
+}
+
+func TestApplyAnswersAReportNotAnErrorWhenTheDatabaseRefusesTheText(t *testing.T) { // H3: SQLSTATE 22021 / 22P05 are 422, never 500
+	e := newImportEnv(t)
+	imp := NewImportQuestionsService(refusingBank{e.bank}, &testsupport.StepClock{}, &testsupport.SeqIDGen{N: 5000})
+
+	report, err := imp.Execute(ctx, in.ImportQuestionsCommand{ExamID: e.examID, File: awsFile()})
+
+	if err != nil {
+		t.Fatalf("Execute = %v, want a report", err)
+	}
+	if report.Applied || len(report.Errors) != 1 || report.Errors[0].Rule != domain.RuleInvalidText || report.Errors[0].Path != "$" {
+		t.Errorf("report = applied %v, errors %+v; want one invalid_text error at $", report.Applied, report.Errors)
 	}
 }
