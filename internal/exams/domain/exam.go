@@ -2,7 +2,18 @@ package domain
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode"
+)
+
+const (
+	maxExamNameRunes = 120
+
+	minQuestionCount, maxQuestionCount = 1, 200
+	minTimeLimitMin, maxTimeLimitMin   = 1, 600
+	minPassPercent, maxPassPercent     = 1, 100
 )
 
 // ExamName is trimmed and 1–120 runes long. Uniqueness among the alive exams
@@ -10,14 +21,24 @@ import (
 type ExamName struct{ value string }
 
 func NewExamName(raw string) (ExamName, error) {
-	return ExamName{}, errors.New("not implemented")
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ExamName{}, SingleViolation("name", "required", "name must not be empty")
+	}
+	if strings.ContainsFunc(trimmed, unicode.IsControl) {
+		return ExamName{}, SingleViolation("name", "format", "name must not contain control characters")
+	}
+	if len([]rune(trimmed)) > maxExamNameRunes {
+		return ExamName{}, SingleViolation("name", "max_length", "name must be at most 120 characters")
+	}
+	return ExamName{value: trimmed}, nil
 }
 
 // RehydrateExamName trusts persisted data.
 func RehydrateExamName(value string) ExamName { return ExamName{value: value} }
 
 func (n ExamName) String() string { return n.value }
-func (n ExamName) Key() string    { return "" }
+func (n ExamName) Key() string    { return strings.ToLower(n.value) }
 
 // Exam is a simulation template that hangs off a subject (Spec 18 §2).
 type Exam struct {
@@ -33,9 +54,49 @@ type Exam struct {
 	DeletedAt     *time.Time
 }
 
+// rangeViolation is the BR-E2 violation of one numeric field.
+func rangeViolation(field string, min, max int) Violation {
+	return Violation{Field: field, Rule: RuleRange, Message: fmt.Sprintf("%s must be between %d and %d", field, min, max)}
+}
+
+// checkRanges reports a violation per out-of-range number, in field order.
+func checkRanges(violations []Violation, questionCount, timeLimitMin, passPercent *int) []Violation {
+	if questionCount != nil && (*questionCount < minQuestionCount || *questionCount > maxQuestionCount) {
+		violations = append(violations, rangeViolation("questionCount", minQuestionCount, maxQuestionCount))
+	}
+	if timeLimitMin != nil && (*timeLimitMin < minTimeLimitMin || *timeLimitMin > maxTimeLimitMin) {
+		violations = append(violations, rangeViolation("timeLimitMin", minTimeLimitMin, maxTimeLimitMin))
+	}
+	if passPercent != nil && (*passPercent < minPassPercent || *passPercent > maxPassPercent) {
+		violations = append(violations, rangeViolation("passPercent", minPassPercent, maxPassPercent))
+	}
+	return violations
+}
+
+// nameViolations validates a raw name and appends its violations.
+func nameViolations(violations []Violation, raw string) (ExamName, []Violation) {
+	name, err := NewExamName(raw)
+	if err != nil {
+		var v *ValidationError
+		if errors.As(err, &v) {
+			violations = append(violations, v.Violations...)
+		}
+	}
+	return name, violations
+}
+
 // NewExam validates every field and reports all violations together (BR-E1, BR-E2).
 func NewExam(id, subjectID, name string, questionCount, timeLimitMin, passPercent int, now time.Time) (Exam, error) {
-	return Exam{}, errors.New("not implemented")
+	validName, violations := nameViolations(nil, name)
+	violations = checkRanges(violations, &questionCount, &timeLimitMin, &passPercent)
+	if len(violations) > 0 {
+		return Exam{}, NewValidation(violations...)
+	}
+	return Exam{
+		ID: id, SubjectID: subjectID, Name: validName,
+		QuestionCount: questionCount, TimeLimitMin: timeLimitMin, PassPercent: passPercent,
+		Version: 1, CreatedAt: now, UpdatedAt: now,
+	}, nil
 }
 
 // ExamEdit carries the editable fields of PATCH; nil means "leave unchanged".
@@ -48,8 +109,33 @@ type ExamEdit struct {
 
 // Edit applies every set field or none, and increments Version on success.
 func (e *Exam) Edit(edit ExamEdit, now time.Time) error {
-	return errors.New("not implemented")
+	name := e.Name
+	var violations []Violation
+	if edit.Name != nil {
+		name, violations = nameViolations(violations, *edit.Name)
+	}
+	violations = checkRanges(violations, edit.QuestionCount, edit.TimeLimitMin, edit.PassPercent)
+	if len(violations) > 0 {
+		return NewValidation(violations...)
+	}
+
+	e.Name = name
+	if edit.QuestionCount != nil {
+		e.QuestionCount = *edit.QuestionCount
+	}
+	if edit.TimeLimitMin != nil {
+		e.TimeLimitMin = *edit.TimeLimitMin
+	}
+	if edit.PassPercent != nil {
+		e.PassPercent = *edit.PassPercent
+	}
+	e.Version++
+	e.UpdatedAt = now
+	return nil
 }
 
 // Delete is logical: the row stays, marked deleted (Spec 16 FR-0).
-func (e *Exam) Delete(now time.Time) {}
+func (e *Exam) Delete(now time.Time) {
+	e.DeletedAt = &now
+	e.UpdatedAt = now
+}
