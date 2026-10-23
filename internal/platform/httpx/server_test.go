@@ -3,6 +3,7 @@ package httpx
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -80,5 +81,23 @@ func TestWrongMethodOnRegisteredRouteAnswersJSON405(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed || !strings.Contains(rec.Body.String(), `"code":"method_not_allowed"`) {
 		t.Errorf("status %d, body %s; want 405 method_not_allowed", rec.Code, rec.Body.String())
+	}
+}
+
+// Slice 06b decision 4: the answer endpoint is a PUT, so the preflight must
+// allow it, with every method the API uses.
+func TestCORSPreflightAllowsPutAndTheOtherMethodsTheAPIUses(t *testing.T) {
+	handler := NewServer(Config{AllowOrigins: []string{"http://localhost:3000"}}, okRegistrar("PUT /a"))
+	req := httptest.NewRequest(http.MethodOptions, "/a", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "PUT")
+
+	rec := serve(handler, req)
+
+	allowed := strings.Split(strings.ReplaceAll(rec.Header().Get("Access-Control-Allow-Methods"), " ", ""), ",")
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"} {
+		if !slices.Contains(allowed, method) {
+			t.Errorf("Access-Control-Allow-Methods = %q lacks %s", rec.Header().Get("Access-Control-Allow-Methods"), method)
+		}
 	}
 }
