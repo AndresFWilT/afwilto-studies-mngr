@@ -60,10 +60,14 @@ func (s *startAttemptService) Execute(ctx context.Context, examID string, cmd in
 		return domain.AttemptView{}, err
 	} else if found {
 		// An open attempt past deadlineAt + 5 s is finalized now, scored as it
-		// stands, and no longer blocks the start (slice 06b decision 3).
-		if _, finalized, err := finalizeIfDue(ctx, s.attempts, s.clock, open); err != nil {
+		// stands, and no longer blocks the start (slice 06b decision 3). The
+		// status is read under the attempt's row lock, so one that a racing
+		// submit or finalize closed since FindInProgress does not block either;
+		// a start that still loses the unique index gets the 409 from Create,
+		// naming the attempt that is really in progress.
+		if current, _, err := finalizeIfDue(ctx, s.attempts, s.clock, open); err != nil {
 			return domain.AttemptView{}, err
-		} else if !finalized {
+		} else if current.Status == domain.AttemptInProgress {
 			return domain.AttemptView{}, domain.NewAttemptInProgress(open)
 		}
 	}
