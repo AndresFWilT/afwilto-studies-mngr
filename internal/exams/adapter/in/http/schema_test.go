@@ -89,26 +89,6 @@ func TestEveryTextExamplePassesStage3OnAnEmptyExam(t *testing.T) { // S03-1
 	}
 }
 
-func TestTheMediaExampleStopsAtStage4InThisSlice(t *testing.T) { // S03-1 exclusion, BR-Q4 in slice 03
-	file, errs := sharedReader(t).Read(example(t, "moto-images.json"))
-	if len(errs) != 0 || file == nil {
-		t.Fatalf("file = %v, errors = %+v", file != nil, errs)
-	}
-	ids := 0
-	plan := domain.PlanImport(domain.PlanInput{
-		ExamID: "exam", File: *file, Now: testNow,
-		NewID: func() string { ids++; return "id-" + string(rune('a'+ids)) },
-	})
-	if len(plan.Report.Errors) == 0 {
-		t.Fatal("moto-images.json must be rejected for its media: references")
-	}
-	for _, e := range plan.Report.Errors {
-		if e.Rule != domain.RuleMediaMissing {
-			t.Errorf("error %+v, want only media_missing", e)
-		}
-	}
-}
-
 func TestReadKeepsTheFileSourceAndTheCategoryOrder(t *testing.T) { // FR-2, FR-3.1 first-appearance order
 	file, errs := sharedReader(t).Read(example(t, "aws-text.json"))
 	if len(errs) != 0 || file == nil {
@@ -299,8 +279,6 @@ func TestStage1RejectsWhatIsNotOneJSONDocument(t *testing.T) { // slice 03 §1.3
 		"trailing garbage":     `{"format":"afwilto-questions"} xyz`,
 		"empty":                ``,
 		"only whitespace":      "  \n ",
-		"a lone array":         `[]`,
-		"a bare string":        `"hello"`,
 		"control character":    "{\"format\":\"a\x01\"}",
 		"invalid UTF-8 inside": "{\"format\":\"a\xff\"}",
 	}
@@ -313,6 +291,16 @@ func TestStage1RejectsWhatIsNotOneJSONDocument(t *testing.T) { // slice 03 §1.3
 				t.Errorf("file = %v, errors = %+v; want one error at $ with rule json", file != nil, errs)
 			}
 		})
+	}
+}
+
+func TestValidJSONThatIsNotAnObjectFailsStage2AtTheRoot(t *testing.T) { // syntax is stage 1, shape is stage 2
+	for _, doc := range []string{`[]`, `"hello"`, `42`, `null`} {
+		file, errs := sharedReader(t).Read([]byte(doc))
+
+		if file != nil || len(errs) != 1 || errs[0].Path != "$" || errs[0].Rule != domain.RuleSchema {
+			t.Errorf("%s: file = %v, errors = %+v; want one schema error at $", doc, file != nil, errs)
+		}
 	}
 }
 

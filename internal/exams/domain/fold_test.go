@@ -61,7 +61,7 @@ func TestLevenshteinRunsOnFoldedNames(t *testing.T) { // FR-3 similarity warning
 		{"Alto rendimeinto", "Alto rendimiento", 2}, // AC-3: two adjacent letters swapped
 		{"Alto rendimiento", "Alto rendimiento", 0},
 		{"ALTO  Rendimiento", "alto rendimiento", 0}, // case and spacing are folded away
-		{"Señales", "Senales", 0},                     // accents are folded away
+		{"Señales", "Senales", 0},                    // accents are folded away
 		{"kitten", "sitting", 3},
 		{"", "abc", 3},
 		{"abc", "", 3},
