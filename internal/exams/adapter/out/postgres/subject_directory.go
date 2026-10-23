@@ -17,5 +17,8 @@ func NewSubjectDirectory(pool *pgxpool.Pool) *SubjectDirectory {
 }
 
 func (d *SubjectDirectory) IsAlive(ctx context.Context, subjectID string) (bool, error) {
-	return false, errNotImplemented
+	var alive bool
+	err := d.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM subjects WHERE id = $1 AND deleted_at IS NULL)`, subjectID).Scan(&alive)
+	return alive, err
 }

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,5 +17,8 @@ func NewSubjectExamCounter(pool *pgxpool.Pool) *SubjectExamCounter {
 }
 
 func (c *SubjectExamCounter) CountAliveExams(ctx context.Context, subjectID string) (int, error) {
-	return 0, errors.New("not implemented")
+	var n int
+	err := c.pool.QueryRow(ctx,
+		`SELECT count(*)::int FROM exams WHERE subject_id = $1 AND deleted_at IS NULL`, subjectID).Scan(&n)
+	return n, err
 }
