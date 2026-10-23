@@ -32,6 +32,8 @@ type attemptsAPI struct {
 	examID   string
 	bank     *testsupport.FakeQuestionBank
 	attempts *testsupport.FakeAttemptRepo
+	clock    *testsupport.FixedClock
+	notes    *testsupport.FakeNoteDirectory
 }
 
 func dominioRef(name string) domain.CategoryRef {
@@ -103,14 +105,21 @@ func newAttemptsAPI(t *testing.T) attemptsAPI {
 	attempts := testsupport.NewFakeAttemptRepo(repo)
 	clock := &testsupport.FixedClock{T: attemptsT0}
 	ids := &testsupport.SeqIDGen{N: 100}
+	notes := testsupport.NewFakeNoteDirectory()
 	deps := Deps{
-		CreateExam:     usecase.NewCreateExamService(repo, subjects, clock, ids),
-		PreviewSession: usecase.NewPreviewSessionService(repo, bank),
-		StartAttempt:   usecase.NewStartAttemptService(repo, bank, attempts, clock, ids, testsupport.FixedSeeds{Seed: 99}),
+		CreateExam:       usecase.NewCreateExamService(repo, subjects, clock, ids),
+		GetExam:          usecase.NewGetExamService(repo),
+		PreviewSession:   usecase.NewPreviewSessionService(repo, bank),
+		StartAttempt:     usecase.NewStartAttemptService(repo, bank, attempts, clock, ids, testsupport.FixedSeeds{Seed: 99}),
+		GetAttempt:       usecase.NewGetAttemptService(attempts, clock),
+		AnswerItem:       usecase.NewAnswerItemService(attempts, clock),
+		SubmitAttempt:    usecase.NewSubmitAttemptService(attempts, clock),
+		ReviewAttempt:    usecase.NewReviewAttemptService(attempts, notes, clock),
+		ListExamAttempts: usecase.NewListExamAttemptsService(repo, attempts),
 	}
 	env := apiEnv{router: httpx.NewServer(httpx.Config{MaxBodyBytes: 1 << 20}, Register(deps))}
 	exam := env.createExam(t, subjectA, "SAA-C03")
-	api := attemptsAPI{apiEnv: env, examID: exam["id"].(string), bank: bank, attempts: attempts}
+	api := attemptsAPI{apiEnv: env, examID: exam["id"].(string), bank: bank, attempts: attempts, clock: clock, notes: notes}
 	bank.Set(api.examID, attemptsBank(api.examID))
 	return api
 }

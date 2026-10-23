@@ -39,6 +39,14 @@ type Deps struct {
 	// when its use case is wired.
 	PreviewSession in.PreviewSession
 	StartAttempt   in.StartAttempt
+
+	// Slice 06b: reading, answering, submitting and reviewing an attempt, and
+	// the exam's history. Each route exists when its use case is wired.
+	GetAttempt       in.GetAttempt
+	AnswerItem       in.AnswerItem
+	SubmitAttempt    in.SubmitAttempt
+	ReviewAttempt    in.ReviewAttempt
+	ListExamAttempts in.ListExamAttempts
 }
 
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02),
