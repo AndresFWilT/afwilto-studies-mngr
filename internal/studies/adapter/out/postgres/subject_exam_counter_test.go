@@ -2,8 +2,15 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/afwilto/studies-mngr/internal/studies/app/usecase"
+	"github.com/afwilto/studies-mngr/internal/studies/domain"
+	"github.com/afwilto/studies-mngr/internal/studies/testsupport"
 )
 
 // insertExam writes an exam row through SQL: studies never import the exams
@@ -40,5 +47,42 @@ func TestSubjectExamCounterCountsOnlyAliveExamsOfTheSubject(t *testing.T) { // S
 		if err != nil || got != tc.want {
 			t.Errorf("%s: CountAliveExams = (%d, %v), want %d", name, got, err, tc.want)
 		}
+	}
+}
+
+func TestSubjectRepoRefusesToDeleteASubjectWithAnAliveExamWhateverTheServiceChecked(t *testing.T) { // S02-7 gap, H1: the DB is the guard
+	e := newSubjRepoEnv(t)
+	cat := e.cats.add(t, "TI", nil)
+	aws := e.add(t, cat.ID, "AWS")
+	insertExam(t, e.ids.NewID(), aws.ID, "SAA-C03", false)
+
+	aws.Delete(e.now.Add(time.Hour))
+	err := e.repo.Update(context.Background(), aws)
+
+	wantConflictErr(t, err, domain.RuleInUse)
+	var c *domain.ConflictError
+	if errors.As(err, &c) && strings.Contains(strings.ToLower(c.Message), "notes") {
+		t.Errorf("the message %q names notes, but the blocker here is an exam", c.Message)
+	}
+	if _, getErr := e.repo.Get(context.Background(), aws.ID); getErr != nil {
+		t.Errorf("the subject must stay alive: %v", getErr)
+	}
+}
+
+func TestDeleteSubjectServiceOverRealAdaptersIsBlockedByAnAliveExam(t *testing.T) { // S02-7 gap: the real path, no fakes
+	e := newSubjRepoEnv(t)
+	cat := e.cats.add(t, "TI", nil)
+	aws := e.add(t, cat.ID, "AWS")
+	insertExam(t, e.ids.NewID(), aws.ID, "SAA-C03", false)
+	svc := usecase.NewDeleteSubjectService(e.repo, NewNoteRepository(pool), NewSubjectExamCounter(pool), &testsupport.StepClock{})
+
+	wantConflictErr(t, svc.Execute(context.Background(), aws.ID), domain.RuleInUse)
+	if _, err := e.repo.Get(context.Background(), aws.ID); err != nil {
+		t.Errorf("the subject must stay alive: %v", err)
+	}
+
+	exec(t, fmt.Sprintf(`UPDATE exams SET deleted_at = now() WHERE subject_id = '%s'`, aws.ID))
+	if err := svc.Execute(context.Background(), aws.ID); err != nil {
+		t.Errorf("delete once the exam is gone: %v", err)
 	}
 }
