@@ -49,7 +49,7 @@ func TestMigration0009AddsTheAliveNameIndexAndTheHardDeleteTrigger(t *testing.T)
 	skipShort(t)
 	var indexDef string
 	err := pool.QueryRow(context.Background(),
-		`SELECT indexdef FROM pg_indexes WHERE tablename = 'exams' AND indexdef LIKE 'CREATE UNIQUE INDEX%'`).Scan(&indexDef)
+		`SELECT indexdef FROM pg_indexes WHERE tablename = 'exams' AND indexdef LIKE 'CREATE UNIQUE INDEX%' AND indexname <> 'exams_pkey'`).Scan(&indexDef)
 	if err != nil {
 		t.Fatalf("no unique index on exams: %v", err)
 	}
