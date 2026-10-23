@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,18 +52,26 @@ func newSessionE2E(t *testing.T) *sessionE2E {
 	e := &attemptEnv{bankEnv: b, attempts: NewAttemptRepository(pool)}
 	t0 := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
 	clock := &testsupport.FixedClock{T: t0}
+	s := &sessionE2E{attemptEnv: e, clock: clock, t0: t0}
+	s.router = s.routerWith(clock)
+	return s
+}
+
+// routerWith wires the real stack around any clock, for tests that move time
+// while requests are in flight.
+func (e *sessionE2E) routerWith(clock out.Clock) http.Handler {
 	notes := NewNoteDirectory(pool)
 	deps := examshttp.Deps{
-		GetExam:          usecase.NewGetExamService(b.exams),
-		PreviewSession:   usecase.NewPreviewSessionService(b.exams, b.bank),
-		StartAttempt:     usecase.NewStartAttemptService(b.exams, b.bank, e.attempts, clock, uuidGen{}, testsupport.FixedSeeds{Seed: 5}),
+		GetExam:          usecase.NewGetExamService(e.exams),
+		PreviewSession:   usecase.NewPreviewSessionService(e.exams, e.bank),
+		StartAttempt:     usecase.NewStartAttemptService(e.exams, e.bank, e.attempts, clock, uuidGen{}, testsupport.FixedSeeds{Seed: 5}),
 		GetAttempt:       usecase.NewGetAttemptService(e.attempts, clock),
 		AnswerItem:       usecase.NewAnswerItemService(e.attempts, clock),
 		SubmitAttempt:    usecase.NewSubmitAttemptService(e.attempts, clock),
 		ReviewAttempt:    usecase.NewReviewAttemptService(e.attempts, notes, clock),
-		ListExamAttempts: usecase.NewListExamAttemptsService(b.exams, e.attempts),
+		ListExamAttempts: usecase.NewListExamAttemptsService(e.exams, e.attempts),
 	}
-	return &sessionE2E{attemptEnv: e, clock: clock, t0: t0, router: httpx.NewServer(httpx.Config{MaxBodyBytes: 1 << 20}, examshttp.Register(deps))}
+	return httpx.NewServer(httpx.Config{MaxBodyBytes: 1 << 20}, examshttp.Register(deps))
 }
 
 func (e *sessionE2E) call(t *testing.T, method, path, body string) (int, map[string]any) {
@@ -425,5 +435,172 @@ func TestASubmitFourSecondsPastTheDeadlineLastsExactlyTheTimeLimitOverRealPostgr
 	var submittedAt time.Time
 	if err := pool.QueryRow(ctx, `SELECT submitted_at FROM attempts WHERE id = $1`, id).Scan(&submittedAt); err != nil || !submittedAt.Equal(e.t0.Add(10*time.Minute)) {
 		t.Errorf("submitted_at = %v (err %v), want the deadline", submittedAt, err)
+	}
+}
+
+// ── phase-3 fix 7: PUT racing submit and PUT racing expiry, over real Postgres ──
+
+// movableClock answers t0 until Jump is called, then t0 + by, safe for
+// goroutines.
+type movableClock struct {
+	t0 time.Time
+	by atomic.Int64
+}
+
+func (c *movableClock) Now() time.Time       { return c.t0.Add(time.Duration(c.by.Load())) }
+func (c *movableClock) Jump(d time.Duration) { c.by.Store(int64(d)) }
+
+// serve runs one request without touching *testing.T, so goroutines can use it.
+func serve(router http.Handler, method, path, body string) int {
+	var req *http.Request
+	if body == "" {
+		req = httptest.NewRequest(method, path, nil)
+	} else {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+type storedItem struct {
+	selected   []string
+	answeredAt *time.Time
+}
+
+func (e *sessionE2E) storedItems(t *testing.T, id string) []storedItem {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT selected, answered_at FROM attempt_items WHERE attempt_id = $1 ORDER BY position`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []storedItem
+	for rows.Next() {
+		var it storedItem
+		if err := rows.Scan(&it.selected, &it.answeredAt); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// checkClosedConsistently verifies the invariants of a race of PUTs (each
+// sending the right label of its own item) with the closing request: a PUT
+// that answered 200 is stored and counted, one that answered 409 left the
+// item empty, and the stored score is the score of the stored answers.
+func (e *sessionE2E) checkClosedConsistently(t *testing.T, round int, id, wantStatus string, put []int, deadlineWithGrace *time.Time) {
+	t.Helper()
+	items := e.storedItems(t, id)
+	answered := 0
+	for i, it := range items {
+		stored := len(it.selected) > 0
+		switch put[i] {
+		case http.StatusOK:
+			if !stored {
+				t.Errorf("round %d item %d: PUT answered 200 but nothing is stored", round, i)
+			}
+		case http.StatusConflict:
+			if stored {
+				t.Errorf("round %d item %d: PUT answered 409 but its answer was stored (a write after the close)", round, i)
+			}
+		default:
+			t.Errorf("round %d item %d: PUT answered %d", round, i, put[i])
+		}
+		if stored {
+			answered++
+			if deadlineWithGrace != nil && it.answeredAt != nil && it.answeredAt.After(*deadlineWithGrace) {
+				t.Errorf("round %d item %d: answered at %v, after deadline + grace %v", round, i, it.answeredAt, deadlineWithGrace)
+			}
+		}
+	}
+	var status string
+	var score float64
+	if err := pool.QueryRow(ctx, `SELECT status, score_percent::float8 FROM attempts WHERE id = $1`, id).Scan(&status, &score); err != nil {
+		t.Fatal(err)
+	}
+	if status != wantStatus {
+		t.Errorf("round %d: status = %q, want %q", round, status, wantStatus)
+	}
+	if want := round2(100 * float64(answered) / float64(len(items))); score != want {
+		t.Errorf("round %d: stored score %v, but the stored answers (%d of %d right) score %v", round, score, answered, len(items), want)
+	}
+	var wrongFlags int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attempt_items WHERE attempt_id = $1 AND correct IS DISTINCT FROM (cardinality(selected) > 0)`, id).Scan(&wrongFlags); err != nil || wrongFlags != 0 {
+		t.Errorf("round %d: %d items have a stored correct flag that disagrees with the stored answer (err %v)", round, wrongFlags, err)
+	}
+}
+
+const sixUntimed = `{"selection":{"kind":"random","count":6},"timing":{"kind":"untimed"},"feedback":"end"}`
+const sixTimed = `{"selection":{"kind":"random","count":6},"timing":{"kind":"timed","minutes":10},"feedback":"end"}`
+
+func putBody(label string) string { return `{"selected":["` + label + `"],"flagged":false}` }
+
+func TestPutsRacingASubmitAreEitherInTheScoreOrRefusedOverRealPostgres(t *testing.T) { // phase-3 fix 7
+	e := newSessionE2E(t)
+	for round := range 10 {
+		started := e.start(t, sixUntimed)
+		id := started["id"].(string)
+		items := started["items"].([]any)
+		put := make([]int, len(items))
+		var submit int
+		var wg sync.WaitGroup
+		for i := range items {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				put[i] = serve(e.router, http.MethodPut, fmt.Sprintf("/api/v1/attempts/%s/items/%d", id, i), putBody(rightLabel(items[i])))
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Duration(round%4) * time.Millisecond) // spread the submit across the PUTs
+			submit = serve(e.router, http.MethodPost, "/api/v1/attempts/"+id+"/submit", "")
+		}()
+		wg.Wait()
+
+		if submit != http.StatusOK {
+			t.Fatalf("round %d: submit answered %d", round, submit)
+		}
+		e.checkClosedConsistently(t, round, id, "submitted", put, nil)
+	}
+}
+
+func TestPutsRacingTheExpiryAreEitherInTheScoreOrRefusedOverRealPostgres(t *testing.T) { // phase-3 fix 7
+	e := newSessionE2E(t)
+	for round := range 10 {
+		clock := &movableClock{t0: e.t0}
+		router := e.routerWith(clock)
+		started := e.start(t, sixTimed) // started at e.t0 through the fixed clock: deadline t0 + 10 min
+		id := started["id"].(string)
+		items := started["items"].([]any)
+		grace := e.t0.Add(10*time.Minute + 5*time.Second)
+		put := make([]int, len(items))
+		var wg sync.WaitGroup
+		for i := range items {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				time.Sleep(time.Duration(i) * 300 * time.Microsecond)
+				put[i] = serve(router, http.MethodPut, fmt.Sprintf("/api/v1/attempts/%s/items/%d", id, i), putBody(rightLabel(items[i])))
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Duration(round%4+1) * 500 * time.Microsecond)
+			clock.Jump(10*time.Minute + 6*time.Second) // past deadline + grace
+		}()
+		wg.Wait()
+		// Whoever looks first after the jump finalizes; a GET does it when no PUT did.
+		if code := serve(router, http.MethodGet, "/api/v1/attempts/"+id, ""); code != http.StatusOK {
+			t.Fatalf("round %d: GET answered %d", round, code)
+		}
+
+		e.checkClosedConsistently(t, round, id, "expired", put, &grace)
 	}
 }
