@@ -134,4 +134,27 @@ type QuestionExport struct {
 
 // QuestionMediaHashes lists the distinct hashes the stored questions
 // reference, in order of first use.
-func QuestionMediaHashes(qs []Question) []string { return nil }
+func QuestionMediaHashes(qs []Question) []string {
+	var hashes []string
+	seen := map[string]bool{}
+	add := func(ref string) {
+		if IsMediaSHA(ref) && !seen[ref] {
+			seen[ref] = true
+			hashes = append(hashes, ref)
+		}
+	}
+	for _, q := range qs {
+		visitMediaFields(q.Stem, q.Explanation, q.Options, func(_, value string, isImage bool) {
+			if isImage {
+				if ref, ok := strings.CutPrefix(value, MediaScheme); ok {
+					add(ref)
+				}
+				return
+			}
+			for _, m := range markdownMedia.FindAllStringSubmatch(value, -1) {
+				add(m[2])
+			}
+		})
+	}
+	return hashes
+}

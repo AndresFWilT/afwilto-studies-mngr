@@ -1,8 +1,10 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/afwilto/studies-mngr/internal/exams/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/exams/app/port/out"
@@ -51,10 +53,14 @@ func (s *importQuestionsService) Execute(ctx context.Context, cmd in.ImportQuest
 		return report, nil
 	}
 
+	known, err := s.storedHashes(ctx, cmd.File)
+	if err != nil {
+		return domain.ImportReport{}, err
+	}
 	plan := func(bank domain.Bank) domain.ImportPlan {
 		return domain.PlanImport(domain.PlanInput{
 			ExamID: cmd.ExamID, Bank: bank, File: *cmd.File, Primary: cmd.Primary,
-			NewID: s.ids.NewID, Now: s.clock.Now(),
+			NewID: s.ids.NewID, Now: s.clock.Now(), Archive: cmd.Archive, KnownMedia: known,
 		})
 	}
 
@@ -69,9 +75,18 @@ func (s *importQuestionsService) Execute(ctx context.Context, cmd in.ImportQuest
 	}
 
 	var planned domain.ImportPlan
-	err := s.bank.ApplyImport(ctx, cmd.ExamID, func(bank domain.Bank) (*domain.ImportWrite, error) {
+	err = s.bank.ApplyImport(ctx, cmd.ExamID, func(bank domain.Bank) (*domain.ImportWrite, error) {
 		planned = plan(bank)
-		return planned.Write, nil // nil when the plan has errors: nothing is written
+		if planned.Write == nil { // the plan has errors: nothing is written, files included
+			return nil, nil
+		}
+		// The files go to disk before the transaction commits. If it then
+		// rolls back, the orphan files are harmless: they are content-addressed
+		// and the next import of the same image reuses them.
+		if err := s.storeFiles(ctx, planned.Write.Media); err != nil {
+			return nil, err
+		}
+		return planned.Write, nil
 	})
 	if errors.Is(err, domain.ErrInvalidText) {
 		// The planner rejects NUL bytes, so this is text it could not foresee;
@@ -85,4 +100,41 @@ func (s *importQuestionsService) Execute(ctx context.Context, cmd in.ImportQuest
 	report := planned.Report
 	report.Applied = planned.Write != nil
 	return report, nil
+}
+
+// storedHashes finds which of the file's media:<sha256> references are stored.
+// A failed lookup is an error, never an empty answer.
+func (s *importQuestionsService) storedHashes(ctx context.Context, file *domain.QuestionFile) (map[string]bool, error) {
+	var shas []string
+	seen := map[string]bool{}
+	for _, r := range domain.MediaRefs(file.Questions) {
+		if domain.IsMediaSHA(r.Ref) && !seen[r.Ref] {
+			seen[r.Ref] = true
+			shas = append(shas, r.Ref)
+		}
+	}
+	known := map[string]bool{}
+	if len(shas) == 0 || s.index == nil {
+		return known, nil
+	}
+	found, err := s.index.Find(ctx, shas)
+	if err != nil {
+		return nil, fmt.Errorf("looking up stored media: %w", err)
+	}
+	for sha := range found {
+		known[sha] = true
+	}
+	return known, nil
+}
+
+func (s *importQuestionsService) storeFiles(ctx context.Context, files []domain.MediaFile) error {
+	if len(files) > 0 && s.storage == nil {
+		return errors.New("the import has images to store but no media storage is wired")
+	}
+	for _, f := range files {
+		if err := s.storage.Put(ctx, f.Media.SHA256, bytes.NewReader(f.Data)); err != nil {
+			return fmt.Errorf("storing media %s: %w", f.Media.SHA256, err)
+		}
+	}
+	return nil
 }
