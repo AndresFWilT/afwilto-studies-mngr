@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -165,8 +166,29 @@ func getExam(ctx context.Context, q queryer, id string) (domain.Exam, error) {
 	return e, err
 }
 
-// GetSummary adds the alive question total and the classifications with their
-// categories; LastSimulation arrives with slice 06b.
+// lastSimulationSQL is the latest closed simulation attempt of the exam e, by
+// the time it closed. Practice attempts and open attempts never count.
+const lastSimulationSQL = `
+	SELECT a.score_percent, a.passed, a.submitted_at
+	FROM attempts a
+	WHERE a.exam_id = e.id AND a.status IN ('submitted', 'expired') AND a.submitted_at IS NOT NULL
+	  AND a.config->'selection'->>'kind' = 'simulation'
+	ORDER BY a.submitted_at DESC, a.id DESC LIMIT 1`
+
+// simulationResult maps the nullable columns of lastSimulationSQL.
+func simulationResult(score *float64, passed *bool, at *time.Time) *domain.SimulationResult {
+	if score == nil || at == nil {
+		return nil
+	}
+	result := &domain.SimulationResult{ScorePercent: *score, At: at.UTC()}
+	if passed != nil {
+		result.Passed = *passed
+	}
+	return result
+}
+
+// GetSummary adds the alive question total, the latest closed simulation and
+// the classifications with their categories.
 func (r *ExamRepository) GetSummary(ctx context.Context, id string) (summary domain.ExamSummary, err error) {
 	err = readSnapshot(ctx, r.pool, func(q queryer) error {
 		e, err := getExam(ctx, q, id)
@@ -174,9 +196,19 @@ func (r *ExamRepository) GetSummary(ctx context.Context, id string) (summary dom
 			return err
 		}
 		summary = domain.ExamSummary{Exam: e}
-		if err := q.QueryRow(ctx, `SELECT count(*) FROM questions WHERE exam_id = $1 AND deleted_at IS NULL`, id).Scan(&summary.QuestionTotal); err != nil {
+		var (
+			score  *float64
+			passed *bool
+			at     *time.Time
+		)
+		if err := q.QueryRow(ctx, `
+			SELECT (SELECT count(*) FROM questions WHERE exam_id = e.id AND deleted_at IS NULL),
+			       ls.score_percent, ls.passed, ls.submitted_at
+			FROM exams e LEFT JOIN LATERAL (`+lastSimulationSQL+`) ls ON true
+			WHERE e.id = $1`, id).Scan(&summary.QuestionTotal, &score, &passed, &at); err != nil {
 			return err
 		}
+		summary.LastSimulation = simulationResult(score, passed, at)
 		summary.Classifications, err = loadClassifications(ctx, q, id)
 		return err
 	})
@@ -189,8 +221,10 @@ func (r *ExamRepository) GetSummary(ctx context.Context, id string) (summary dom
 func (r *ExamRepository) ListBySubject(ctx context.Context, subjectID string) ([]domain.ExamSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.subject_id, e.name, e.question_count, e.time_limit_min, e.pass_percent, e.version, e.created_at, e.updated_at,
-		       (SELECT count(*) FROM questions q WHERE q.exam_id = e.id AND q.deleted_at IS NULL)
-		FROM exams e WHERE e.deleted_at IS NULL AND e.subject_id = $1 ORDER BY lower(e.name) COLLATE "C", e.id`, subjectID)
+		       (SELECT count(*) FROM questions q WHERE q.exam_id = e.id AND q.deleted_at IS NULL),
+		       ls.score_percent, ls.passed, ls.submitted_at
+		FROM exams e LEFT JOIN LATERAL (`+lastSimulationSQL+`) ls ON true
+		WHERE e.deleted_at IS NULL AND e.subject_id = $1 ORDER BY lower(e.name) COLLATE "C", e.id`, subjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -199,15 +233,18 @@ func (r *ExamRepository) ListBySubject(ctx context.Context, subjectID string) ([
 	summaries := []domain.ExamSummary{}
 	for rows.Next() {
 		var (
-			e     domain.Exam
-			name  string
-			total int
+			e      domain.Exam
+			name   string
+			total  int
+			score  *float64
+			passed *bool
+			at     *time.Time
 		)
-		if err := rows.Scan(&e.ID, &e.SubjectID, &name, &e.QuestionCount, &e.TimeLimitMin, &e.PassPercent, &e.Version, &e.CreatedAt, &e.UpdatedAt, &total); err != nil {
+		if err := rows.Scan(&e.ID, &e.SubjectID, &name, &e.QuestionCount, &e.TimeLimitMin, &e.PassPercent, &e.Version, &e.CreatedAt, &e.UpdatedAt, &total, &score, &passed, &at); err != nil {
 			return nil, err
 		}
 		e.Name = domain.RehydrateExamName(name)
-		summaries = append(summaries, domain.ExamSummary{Exam: e, QuestionTotal: total})
+		summaries = append(summaries, domain.ExamSummary{Exam: e, QuestionTotal: total, LastSimulation: simulationResult(score, passed, at)})
 	}
 	return summaries, rows.Err()
 }

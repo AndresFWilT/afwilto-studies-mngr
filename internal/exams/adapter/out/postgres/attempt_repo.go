@@ -129,22 +129,123 @@ func (r *AttemptRepository) FindInProgress(ctx context.Context, examID string) (
 	return id, true, nil
 }
 
-func (r *AttemptRepository) Get(ctx context.Context, id string) (domain.Attempt, error) {
-	return domain.Attempt{}, errors.New("not implemented")
+// Get reads the attempt and its items in one snapshot, so a concurrent close
+// is seen whole or not at all.
+func (r *AttemptRepository) Get(ctx context.Context, id string) (a domain.Attempt, err error) {
+	err = readSnapshot(ctx, r.pool, func(q queryer) error {
+		var loadErr error
+		a, loadErr = loadAttempt(ctx, q, id)
+		return loadErr
+	})
+	if err != nil {
+		return domain.Attempt{}, err
+	}
+	return a, nil
 }
 
-func (r *AttemptRepository) Mutate(ctx context.Context, id string, plan func(domain.Attempt) (*out.AttemptChange, error)) error {
-	return errors.New("not implemented")
+// Mutate loads the attempt with its header row locked FOR UPDATE, so two
+// requests on one attempt (an answer racing a submit, two submits, a read that
+// finalizes) run one after the other and each sees the other's result. The
+// change plan returns is stored in the same transaction; with an error it is
+// stored too, so a refused write can still persist the expiry it found.
+func (r *AttemptRepository) Mutate(ctx context.Context, id string, plan func(domain.Attempt) (*out.AttemptChange, error)) (err error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	a, err := loadAttemptFor(ctx, tx, id, true)
+	if err != nil {
+		return err
+	}
+	change, planErr := plan(a)
+	if change == nil {
+		return planErr // nothing to store; the deferred rollback ends the transaction
+	}
+	if err := storeChange(ctx, tx, id, *change); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return planErr
 }
 
+// storeChange writes the header fields a close changes and the answer state of
+// the listed items.
+func storeChange(ctx context.Context, tx pgx.Tx, id string, change out.AttemptChange) error {
+	if h := change.Header; h != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE attempts SET status = $2, submitted_at = $3, score_percent = $4, passed = $5 WHERE id = $1`,
+			id, string(h.Status), utcPtr(h.SubmittedAt), h.ScorePercent, h.Passed); err != nil {
+			return err
+		}
+	}
+	batch := &pgx.Batch{}
+	for _, it := range change.Items {
+		selected := it.Selected
+		if selected == nil {
+			selected = []string{}
+		}
+		batch.Queue(`
+			UPDATE attempt_items SET selected = $3, flagged = $4, answered_at = $5, revealed = $6, correct = $7
+			WHERE attempt_id = $1 AND position = $2`,
+			id, it.Position, selected, it.Flagged, utcPtr(it.AnsweredAt), it.Revealed, it.Correct)
+	}
+	results := tx.SendBatch(ctx, batch)
+	for range change.Items {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
+			return err
+		}
+	}
+	return results.Close()
+}
+
+// ListByExam reads the header of every attempt of the exam; the items are not
+// needed for a history row.
 func (r *AttemptRepository) ListByExam(ctx context.Context, examID string) ([]domain.AttemptSummary, error) {
-	return nil, errors.New("not implemented")
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, config, status, started_at, submitted_at, score_percent, passed
+		FROM attempts WHERE exam_id = $1`, examID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	summaries := []domain.AttemptSummary{}
+	for rows.Next() {
+		var (
+			a      domain.Attempt
+			config []byte
+			status string
+		)
+		if err := rows.Scan(&a.ID, &config, &status, &a.StartedAt, &a.SubmittedAt, &a.ScorePercent, &a.Passed); err != nil {
+			return nil, err
+		}
+		a.Status, a.StartedAt, a.SubmittedAt = domain.AttemptStatus(status), a.StartedAt.UTC(), utcPtr(a.SubmittedAt)
+		if a.Config, err = decodeConfig(config); err != nil {
+			return nil, fmt.Errorf("attempt %s config: %w", a.ID, err)
+		}
+		summaries = append(summaries, a.Summary())
+	}
+	return summaries, rows.Err()
 }
 
-// loadAttempt reads an attempt with its items back, for the round-trip tests
-// and, from slice 06b on, the attempt reads. domain.ErrNotFound when absent.
+// loadAttempt reads an attempt with its items back. domain.ErrNotFound when absent.
 func loadAttempt(ctx context.Context, q queryer, id string) (domain.Attempt, error) {
+	return loadAttemptFor(ctx, q, id, false)
+}
+
+// loadAttemptFor is loadAttempt; with forUpdate it locks the attempt's header
+// row for the rest of the transaction.
+func loadAttemptFor(ctx context.Context, q queryer, id string, forUpdate bool) (domain.Attempt, error) {
 	a := domain.Attempt{ID: id}
+	lock := ""
+	if forUpdate {
+		lock = " FOR UPDATE"
+	}
 	var (
 		config []byte
 		status string
@@ -152,7 +253,7 @@ func loadAttempt(ctx context.Context, q queryer, id string) (domain.Attempt, err
 	)
 	err := q.QueryRow(ctx, `
 		SELECT exam_id, config, status, seed, started_at, deadline_at, submitted_at, score_percent, passed, suggested_minutes, pass_percent
-		FROM attempts WHERE id = $1`, id).Scan(
+		FROM attempts WHERE id = $1`+lock, id).Scan(
 		&a.ExamID, &config, &status, &seed, &a.StartedAt, &a.DeadlineAt, &a.SubmittedAt, &a.ScorePercent, &a.Passed, &a.SuggestedMinutes, &a.PassPercent)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Attempt{}, domain.ErrNotFound
