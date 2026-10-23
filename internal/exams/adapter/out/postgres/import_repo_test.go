@@ -103,6 +103,22 @@ func rowCounts(t *testing.T) map[string]int {
 	return out
 }
 
+// examsChecksum fingerprints every row of every exams-context table in full
+// (version, updated_at and deleted_at included), so a write that keeps the row
+// counts, such as a version bump or a logical delete, still changes it.
+func examsChecksum(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range examTables {
+		var sum string
+		if err := pool.QueryRow(ctx, "SELECT coalesce(md5(string_agg(x::text, '|' ORDER BY x::text)), '') FROM "+table+" x").Scan(&sum); err != nil {
+			t.Fatal(err)
+		}
+		out[table] = sum
+	}
+	return out
+}
+
 func TestLoadBankOfAnEmptyExamIsEmpty(t *testing.T) {
 	b := newBankEnv(t)
 
@@ -239,10 +255,10 @@ func TestReimportingTheSameFileChangesNoRowAtAll(t *testing.T) { // AC-2
 	}
 }
 
-func TestADryRunNeverWrites(t *testing.T) { // S03-8
+func TestADryRunNeverWrites(t *testing.T) { // S03-8: a checksum of whole rows, not a row count
 	b := newBankEnv(t)
 	b.apply(t, fileOf(fq("seed", cn("Dominio", "Seguridad"))))
-	before := rowCounts(t)
+	before := examsChecksum(t)
 
 	edited := fq("seed", cn("Dominio", "Seguridad"))
 	edited.Stem = "edited"
@@ -251,8 +267,11 @@ func TestADryRunNeverWrites(t *testing.T) { // S03-8
 	if !r.DryRun || r.Applied || r.Counts != (domain.ImportCounts{Create: 1, Update: 1}) {
 		t.Fatalf("report = %+v", r)
 	}
-	if after := rowCounts(t); fmt.Sprint(after) != fmt.Sprint(before) {
-		t.Errorf("row counts changed by a dry run: %v -> %v", before, after)
+	after := examsChecksum(t)
+	for _, table := range examTables {
+		if after[table] != before[table] {
+			t.Errorf("%s changed by a dry run (a checksum of its whole rows, deleted_at, version and updated_at included, differs)", table)
+		}
 	}
 	var stem string
 	var version int
