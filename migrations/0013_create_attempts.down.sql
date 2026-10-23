@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS attempt_items;
+DROP TABLE IF EXISTS attempts;
