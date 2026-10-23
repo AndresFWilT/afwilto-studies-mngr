@@ -102,6 +102,11 @@ func main() {
 		DeleteExam:       examsusecase.NewDeleteExamService(examRepo, clock),
 		ImportQuestions:  examsusecase.NewImportQuestionsService(questionBank, clock, ids),
 		FileReader:       questionFiles,
+
+		ListExamQuestions: examsusecase.NewListExamQuestionsService(questionBank),
+		GetQuestion:       examsusecase.NewGetQuestionService(questionBank),
+		DeleteQuestion:    examsusecase.NewDeleteQuestionService(questionBank, clock),
+		MergeCategories:   examsusecase.NewMergeCategoriesService(examRepo, questionBank, clock),
 	}
 
 	router := httpx.NewServer(httpx.Config{

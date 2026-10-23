@@ -46,14 +46,21 @@ type createExamRequest struct {
 	PassPercent   *int    `json:"passPercent"`
 }
 
-// updateExamRequest carries the slice 02 fields; the classification and
-// category fields of the contract arrive with slice 04.
+// updateExamRequest is the contract's UpdateExamRequest: the exam fields of
+// slice 02 and the classification and category edits of slice 04. Opt tells an
+// absent field from a null one.
 type updateExamRequest struct {
 	Version       *int        `json:"version"`
 	Name          Opt[string] `json:"name"`
 	QuestionCount Opt[int]    `json:"questionCount"`
 	TimeLimitMin  Opt[int]    `json:"timeLimitMin"`
 	PassPercent   Opt[int]    `json:"passPercent"`
+
+	Classifications         Opt[[]classificationEditDTO] `json:"classifications"`
+	PrimaryClassificationID Opt[string]                  `json:"primaryClassificationId"`
+	Weights                 Opt[[]weightDTO]             `json:"weights"`
+	WeightMode              Opt[string]                  `json:"weightMode"`
+	Categories              Opt[[]categoryEditDTO]       `json:"categories"`
 }
 
 type lastSimulationDTO struct {

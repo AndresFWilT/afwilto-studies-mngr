@@ -118,12 +118,15 @@ func handleUpdateExam(update in.UpdateExam) http.HandlerFunc {
 				invalid = append(invalid, notNull(f.field))
 			}
 		}
+		structure, structureProblems := req.structure()
+		invalid = append(invalid, structureProblems...)
 		if len(invalid) > 0 {
 			translateError(w, domain.NewValidation(invalid...))
 			return
 		}
 		summary, err := update.Execute(r.Context(), id, in.UpdateExamCommand{
-			Version: *req.Version,
+			Version:   *req.Version,
+			Structure: structure,
 			Edit: domain.ExamEdit{
 				Name: req.Name.Value, QuestionCount: req.QuestionCount.Value,
 				TimeLimitMin: req.TimeLimitMin.Value, PassPercent: req.PassPercent.Value,

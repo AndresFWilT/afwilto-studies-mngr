@@ -39,8 +39,14 @@ func classified(classification string, names ...string) domain.ClassifiedNames {
 	return domain.ClassifiedNames{Classification: classification, Names: names}
 }
 
-func newBankAPI(t *testing.T, questions ...domain.FileQuestion) bankAPI {
+// newBankDeps wires every exams use case over fakes.
+func newBankDeps(t *testing.T) Deps {
 	t.Helper()
+	deps, _, _ := newBankDepsWith()
+	return deps
+}
+
+func newBankDepsWith() (Deps, in.ImportQuestions, *testsupport.StepClock) {
 	subjects := testsupport.NewFakeSubjectDirectory(subjectA, subjectB)
 	repo := testsupport.NewFakeExamRepo(subjects)
 	bank := testsupport.NewFakeQuestionBank(repo)
@@ -57,6 +63,12 @@ func newBankAPI(t *testing.T, questions ...domain.FileQuestion) bankAPI {
 		DeleteQuestion:    usecase.NewDeleteQuestionService(bank, clock),
 		MergeCategories:   usecase.NewMergeCategoriesService(repo, bank, clock),
 	}
+	return deps, usecase.NewImportQuestionsService(bank, clock, ids), clock
+}
+
+func newBankAPI(t *testing.T, questions ...domain.FileQuestion) bankAPI {
+	t.Helper()
+	deps, importer, _ := newBankDepsWith()
 	env := apiEnv{router: httpx.NewServer(httpx.Config{MaxBodyBytes: 1 << 20}, Register(deps))}
 	exam := env.createExam(t, subjectA, "SAA-C03")
 	b := bankAPI{apiEnv: env, examID: exam["id"].(string)}
@@ -65,7 +77,7 @@ func newBankAPI(t *testing.T, questions ...domain.FileQuestion) bankAPI {
 		questions = bankAPIFixture()
 	}
 	file := &domain.QuestionFile{Source: &domain.Source{Kind: "own", Name: "fixture"}, Questions: questions}
-	report, err := usecase.NewImportQuestionsService(bank, clock, ids).Execute(context.Background(), in.ImportQuestionsCommand{ExamID: b.examID, Primary: "Dominio", File: file})
+	report, err := importer.Execute(context.Background(), in.ImportQuestionsCommand{ExamID: b.examID, Primary: "Dominio", File: file})
 	if err != nil || !report.Applied {
 		t.Fatalf("seeding the bank: %v %+v", err, report.Errors)
 	}

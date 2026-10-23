@@ -67,3 +67,25 @@ func TestBodyLimitsOverridesOnlyTheImportRoute(t *testing.T) { // S01-5 wiring
 		t.Errorf("BodyLimits = %v, want only {%q: 53477376}", got, ImportPattern)
 	}
 }
+
+func TestRegisterAddsTheBankRoutesOnlyWhenTheirUseCasesAreWired(t *testing.T) { // slice 04
+	const id = "0192f3a4-0000-7000-8000-000000000001"
+	routes := []struct{ method, path, want string }{
+		{http.MethodGet, "/api/v1/exams/" + id + "/questions", "GET /api/v1/exams/{id}/questions"},
+		{http.MethodGet, "/api/v1/questions/" + id, "GET /api/v1/questions/{id}"},
+		{http.MethodDelete, "/api/v1/questions/" + id, "DELETE /api/v1/questions/{id}"},
+		{http.MethodPost, "/api/v1/exams/" + id + "/categories/merge", "POST /api/v1/exams/{id}/categories/merge"},
+	}
+	unwired, wired := http.NewServeMux(), http.NewServeMux()
+	Register(Deps{})(unwired)
+	Register(newBankDeps(t))(wired)
+
+	for _, tc := range routes {
+		if _, pattern := unwired.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != "" {
+			t.Errorf("%s %s is registered without its use case: %q", tc.method, tc.path, pattern)
+		}
+		if _, pattern := wired.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != tc.want {
+			t.Errorf("%s %s is registered as %q, want %q", tc.method, tc.path, pattern, tc.want)
+		}
+	}
+}
