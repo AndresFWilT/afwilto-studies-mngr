@@ -16,6 +16,7 @@ import (
 	examshttp "github.com/afwilto/studies-mngr/internal/exams/adapter/in/http"
 	"github.com/afwilto/studies-mngr/internal/exams/adapter/out/fsstore"
 	examspostgres "github.com/afwilto/studies-mngr/internal/exams/adapter/out/postgres"
+	examssystem "github.com/afwilto/studies-mngr/internal/exams/adapter/out/system"
 	examsusecase "github.com/afwilto/studies-mngr/internal/exams/app/usecase"
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 	studieshttp "github.com/afwilto/studies-mngr/internal/studies/adapter/in/http"
@@ -98,6 +99,7 @@ func main() {
 	examSubjects := examspostgres.NewSubjectDirectory(pool)
 	questionBank := examspostgres.NewQuestionBankRepository(pool)
 	mediaIndex := examspostgres.NewMediaRepository(pool)
+	attemptRepo := examspostgres.NewAttemptRepository(pool)
 	questionFiles, err := examshttp.NewQuestionFileReader() // compiles the embedded schema once
 	if err != nil {
 		slog.Error("compiling the question import schema", "err", err)
@@ -119,6 +121,9 @@ func main() {
 
 		GetMedia:        examsusecase.NewGetMediaService(mediaIndex, mediaStore),
 		ExportQuestions: examsusecase.NewExportQuestionsService(questionBank, mediaIndex),
+
+		PreviewSession: examsusecase.NewPreviewSessionService(examRepo, questionBank),
+		StartAttempt:   examsusecase.NewStartAttemptService(examRepo, questionBank, attemptRepo, clock, ids, examssystem.RandomSeeds{}),
 	}
 
 	router := httpx.NewServer(httpx.Config{

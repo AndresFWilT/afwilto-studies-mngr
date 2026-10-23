@@ -9,6 +9,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
+	"github.com/afwilto/studies-mngr/internal/exams/app/port/in"
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 )
 
@@ -89,3 +90,31 @@ func TestRegisterAddsTheBankRoutesOnlyWhenTheirUseCasesAreWired(t *testing.T) { 
 		}
 	}
 }
+
+func TestRegisterAddsTheSessionRoutesOnlyWhenTheirUseCasesAreWired(t *testing.T) { // slice 06a
+	const id = "0192f3a4-0000-7000-8000-000000000001"
+	routes := []struct{ method, path, want string }{
+		{http.MethodPost, "/api/v1/exams/" + id + "/sessions/preview", "POST /api/v1/exams/{id}/sessions/preview"},
+		{http.MethodPost, "/api/v1/exams/" + id + "/attempts", "POST /api/v1/exams/{id}/attempts"},
+	}
+	unwired, wired := http.NewServeMux(), http.NewServeMux()
+	Register(Deps{})(unwired)
+	Register(Deps{PreviewSession: stubPreview{}, StartAttempt: stubStart{}})(wired)
+
+	for _, tc := range routes {
+		if _, pattern := unwired.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != "" {
+			t.Errorf("%s %s is registered without its use case: %q", tc.method, tc.path, pattern)
+		}
+		if _, pattern := wired.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != tc.want {
+			t.Errorf("%s %s is registered as %q, want %q", tc.method, tc.path, pattern, tc.want)
+		}
+	}
+	// the history stays unregistered until slice 06b
+	if _, pattern := wired.Handler(httptest.NewRequest(http.MethodGet, "/api/v1/exams/"+id+"/attempts", nil)); pattern != "" {
+		t.Errorf("GET /exams/{id}/attempts is registered as %q before slice 06b", pattern)
+	}
+}
+
+type stubPreview struct{ in.PreviewSession }
+
+type stubStart struct{ in.StartAttempt }

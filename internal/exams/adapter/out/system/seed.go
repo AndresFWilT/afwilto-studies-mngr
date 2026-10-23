@@ -1,7 +1,10 @@
 // Package system provides the production SeedSource of the exams context.
 package system
 
-// RandomSeeds picks the seed of a draw when the caller does not.
+import "math/rand/v2"
+
+// RandomSeeds picks the seed of a draw when the caller does not. The
+// top-level math/rand/v2 functions are seeded from the operating system.
 type RandomSeeds struct{}
 
-func (RandomSeeds) NewSeed() uint64 { return 0 }
+func (RandomSeeds) NewSeed() uint64 { return rand.Uint64() }
