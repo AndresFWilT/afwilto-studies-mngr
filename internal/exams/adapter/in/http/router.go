@@ -29,6 +29,11 @@ type Deps struct {
 	GetQuestion       in.GetQuestion
 	DeleteQuestion    in.DeleteQuestion
 	MergeCategories   in.MergeCategories
+
+	// Slice 05: image serving and the question export. The media route needs
+	// GetMedia; the export needs both, because it streams the images it holds.
+	GetMedia        in.GetMedia
+	ExportQuestions in.ExportQuestions
 }
 
 // Register adds the exams routes to the shared mux: the exams CRUD (slice 02),
