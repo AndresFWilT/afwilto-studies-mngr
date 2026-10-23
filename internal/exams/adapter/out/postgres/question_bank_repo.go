@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
@@ -248,6 +249,7 @@ func (r *QuestionBankRepository) ApplyImport(ctx context.Context, examID string,
 		return err
 	}
 	if err = writeImport(ctx, tx, bank, *write); err != nil {
+		err = importWriteError(err)
 		return err
 	}
 	return tx.Commit(ctx)
@@ -332,6 +334,21 @@ func writeImport(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.Impo
 		}
 	}
 	return results.Close()
+}
+
+// Postgres refuses a NUL in text (22021) and in a jsonb string (22P05); both
+// are bad input, so they surface as domain.ErrInvalidText.
+const (
+	invalidByteSequence     = "22021"
+	untranslatableCharacter = "22P05"
+)
+
+func importWriteError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == invalidByteSequence || pgErr.Code == untranslatableCharacter) {
+		return domain.ErrInvalidText
+	}
+	return err
 }
 
 func queueOptions(batch *pgx.Batch, q domain.Question) {

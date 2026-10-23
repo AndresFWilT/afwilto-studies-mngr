@@ -58,6 +58,12 @@ func (s *importQuestionsService) Execute(ctx context.Context, cmd in.ImportQuest
 		planned = plan(bank)
 		return planned.Write, nil // nil when the plan has errors: nothing is written
 	})
+	if errors.Is(err, domain.ErrInvalidText) {
+		// The planner rejects NUL bytes, so this is text it could not foresee;
+		// it is still bad input (422), not a server fault.
+		return domain.PlanFailure([]domain.ImportError{{Path: "$", Rule: domain.RuleInvalidText,
+			Message: "the database cannot store part of the file's text (a NUL character, U+0000)"}}).Report, nil
+	}
 	if err != nil {
 		return domain.ImportReport{}, err
 	}

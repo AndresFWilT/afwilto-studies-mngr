@@ -107,6 +107,7 @@ var keyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,99}$`)
 // "options[2]". correct_count is reported at most once per question.
 func ValidateQuestion(q FileQuestion) []Violation {
 	var out []Violation
+	out = append(out, invalidTextViolations(q)...)
 	if !keyPattern.MatchString(q.Key) {
 		out = append(out, Violation{Field: "key", Rule: RulePattern,
 			Message: "key must match ^[a-z0-9][a-z0-9._-]{0,99}$ (lowercase letters, digits, dot, underscore, dash)"})
@@ -157,4 +158,53 @@ func correctCountProblem(q FileQuestion) string {
 		}
 	}
 	return ""
+}
+
+// hasNUL reports U+0000, which Postgres text and jsonb cannot store.
+func hasNUL(s string) bool { return strings.ContainsRune(s, 0) }
+
+func invalidText(field string) Violation {
+	return Violation{Field: field, Rule: RuleInvalidText, Message: "the text contains a NUL character (U+0000), which cannot be stored"}
+}
+
+// invalidTextViolations lists every string of the question that holds a NUL
+// byte (phase-1 review H3), at that string's path relative to the question.
+// A name in `categories` is reported at `categories`.
+func invalidTextViolations(q FileQuestion) []Violation {
+	var out []Violation
+	check := func(field, value string) {
+		if hasNUL(value) {
+			out = append(out, invalidText(field))
+		}
+	}
+	check("key", q.Key)
+	check("type", string(q.Type))
+	check("stem", q.Stem)
+	check("explanation", q.Explanation)
+	check("difficulty", q.Difficulty)
+	for i, o := range q.Options {
+		check(fmt.Sprintf("options[%d].text", i), o.Text)
+		check(fmt.Sprintf("options[%d].image", i), o.Image)
+		check(fmt.Sprintf("options[%d].alt", i), o.Alt)
+		check(fmt.Sprintf("options[%d].rationale", i), o.Rationale)
+	}
+	for _, c := range q.Categories {
+		bad := hasNUL(c.Classification)
+		for _, n := range c.Names {
+			bad = bad || hasNUL(n)
+		}
+		if bad {
+			out = append(out, invalidText("categories"))
+			break
+		}
+	}
+	if q.Origin != nil {
+		check("origin.set", q.Origin.Set)
+		check("origin.noteRef", q.Origin.NoteRef)
+	}
+	if q.Source != nil {
+		check("source.kind", q.Source.Kind)
+		check("source.name", q.Source.Name)
+	}
+	return out
 }

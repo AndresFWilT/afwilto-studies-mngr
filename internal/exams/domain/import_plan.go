@@ -179,6 +179,14 @@ func PlanImport(in PlanInput) ImportPlan {
 
 	// ── Stage 3: semantics ──────────────────────────────────────────────
 	var errs []ImportError
+	if src := in.File.Source; src != nil {
+		for field, value := range map[string]string{"source.kind": src.Kind, "source.name": src.Name} {
+			if hasNUL(value) {
+				errs = append(errs, ImportError{Path: field, Rule: RuleInvalidText, Message: invalidText(field).Message})
+			}
+		}
+		sort.Slice(errs, func(a, b int) bool { return errs[a].Path < errs[b].Path })
+	}
 	seenKeys := map[string]bool{}
 	for i, q := range qs {
 		for _, v := range ValidateQuestion(q) {

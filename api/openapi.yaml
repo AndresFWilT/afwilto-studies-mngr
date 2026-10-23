@@ -1770,7 +1770,7 @@ components:
             Spec 18 validation (422): range (slice 02); json, schema,
             file_type, too_many_classifications, primary_single_valued,
             correct_count, option_content, duplicate_key, pattern,
-            media_missing (slice 03); weights_sum, pace_pair, merge_scope
+            media_missing, invalid_text (slice 03); weights_sum, pace_pair, merge_scope
             (slice 04); zip_entries, zip_size, zip_path, zip_layout,
             media_type, media_size, media_dimensions (slice 05);
             insufficient_questions, locked_by_simulation (slice 06a);
