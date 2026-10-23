@@ -12,17 +12,23 @@ import (
 	"github.com/afwilto/studies-mngr/internal/platform/httpx"
 )
 
-func TestRegisterAddsNoRoutesYet(t *testing.T) { // slice 01 §1.3: an empty registrar
+func TestRegisterAddsTheExamsCrudRoutesOnly(t *testing.T) { // slice 02: five routes, the rest still unregistered
 	mux := http.NewServeMux()
 	Register(Deps{})(mux)
+	const examID = "0192f3a4-0000-7000-8000-000000000001"
 
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/subjects/0192f3a4-0000-7000-8000-000000000001/exams"},
-		{http.MethodGet, "/api/v1/exams/0192f3a4-0000-7000-8000-000000000001"},
-		{http.MethodPost, "/api/v1/exams/0192f3a4-0000-7000-8000-000000000001/questions/import"},
+	for _, tc := range []struct{ method, path, want string }{
+		{http.MethodGet, "/api/v1/subjects/" + examID + "/exams", "GET /api/v1/subjects/{id}/exams"},
+		{http.MethodPost, "/api/v1/subjects/" + examID + "/exams", "POST /api/v1/subjects/{id}/exams"},
+		{http.MethodGet, "/api/v1/exams/" + examID, "GET /api/v1/exams/{id}"},
+		{http.MethodPatch, "/api/v1/exams/" + examID, "PATCH /api/v1/exams/{id}"},
+		{http.MethodDelete, "/api/v1/exams/" + examID, "DELETE /api/v1/exams/{id}"},
+		// later slices
+		{http.MethodPost, "/api/v1/exams/" + examID + "/questions/import", ""},
+		{http.MethodGet, "/api/v1/exams/" + examID + "/attempts", ""},
 	} {
-		if _, pattern := mux.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != "" {
-			t.Errorf("%s %s is registered as %q; slice 01 registers nothing", tc.method, tc.path, pattern)
+		if _, pattern := mux.Handler(httptest.NewRequest(tc.method, tc.path, nil)); pattern != tc.want {
+			t.Errorf("%s %s is registered as %q, want %q", tc.method, tc.path, pattern, tc.want)
 		}
 	}
 }
@@ -31,7 +37,7 @@ func TestRegisterComposesWithTheSharedServer(t *testing.T) { // slice 01 §1.3
 	handler := httpx.NewServer(httpx.Config{}, Register(Deps{}))
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/exams/0192f3a4-0000-7000-8000-000000000001", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/exams/0192f3a4-0000-7000-8000-000000000001/attempts", nil))
 
 	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("status %d, Content-Type %q; want the JSON 404 fallback", rec.Code, rec.Header().Get("Content-Type"))
