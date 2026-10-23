@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // ImportError is one failure of the import pipeline. Path is a JSON path in
 // the report's style: "$", "questions[3].options", "questions[0].categories".
@@ -117,24 +120,98 @@ type ClassificationUsage struct {
 	Eligible bool
 }
 
-// PlanImport runs the semantic stages (3: BR-Q1/Q2/Q3, BR-C1, BR-C2; 4: media)
-// and, when they pass, the inference and the diff against the bank.
-func PlanImport(in PlanInput) ImportPlan { return ImportPlan{} }
-
 // ResolvePrimary applies FR-3.1: the exam's existing primary, else the one
 // named by the `primary` parameter (matched by Fold), else the first eligible
-// classification. ok is false when none applies.
+// classification. ok is false when none applies. A parameter that names no
+// classification of usages is skipped; PlanImport reports it as an error when
+// it matters.
 func ResolvePrimary(existing, param string, usages []ClassificationUsage) (name string, ok bool) {
+	if existing != "" {
+		return existing, true
+	}
+	if param != "" {
+		for _, u := range usages {
+			if Fold(u.Name) == Fold(param) {
+				return u.Name, true
+			}
+		}
+	}
+	for _, u := range usages {
+		if u.Eligible {
+			return u.Name, true
+		}
+	}
 	return "", false
 }
 
 // SimilarNames lists the existing names that a new name resembles: folded
 // Levenshtein distance <= 2 or an equal slug (FR-3.2).
-func SimilarNames(name string, existing []string) []string { return nil }
+func SimilarNames(name string, existing []string) []string {
+	var out []string
+	slug := Slug(name)
+	for _, e := range existing {
+		if Levenshtein(name, e) <= 2 || (slug != "" && slug == Slug(e)) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 // DefaultSource stands in when neither the question nor the file has one
 // (Question.source is required by the contract).
 var DefaultSource = Source{Kind: "other", Name: "unspecified"}
 
 // After returns the bank as it will be once w is applied, without touching b.
-func (b Bank) After(w ImportWrite) Bank { return Bank{} }
+func (b Bank) After(w ImportWrite) Bank {
+	out := Bank{}
+	for _, c := range b.Classifications {
+		c.Categories = slices.Clone(c.Categories)
+		out.Classifications = append(out.Classifications, c)
+	}
+	for _, c := range w.Classifications {
+		c.Categories = nil
+		out.Classifications = append(out.Classifications, c)
+	}
+	for i := range out.Classifications {
+		if out.Classifications[i].ID == w.PromoteToPrimary && w.PromoteToPrimary != "" {
+			out.Classifications[i].Position = PositionPrimary
+		}
+	}
+	for _, cat := range w.Categories {
+		for i := range out.Classifications {
+			if out.Classifications[i].ID == cat.ClassificationID {
+				out.Classifications[i].Categories = append(out.Classifications[i].Categories, cat)
+			}
+		}
+	}
+	for _, cw := range w.Weights {
+		for i := range out.Classifications {
+			for j := range out.Classifications[i].Categories {
+				if out.Classifications[i].Categories[j].ID == cw.CategoryID {
+					out.Classifications[i].Categories[j].WeightPercent = cw.Percent
+				}
+			}
+		}
+	}
+
+	updated := map[string]Question{}
+	for _, u := range w.Updates {
+		updated[u.Question.ID] = u.Question
+	}
+	for _, q := range b.Questions {
+		if nq, ok := updated[q.ID]; ok {
+			q = nq
+		}
+		out.Questions = append(out.Questions, cloneQuestion(q))
+	}
+	for _, c := range w.Creates {
+		out.Questions = append(out.Questions, cloneQuestion(c.Question))
+	}
+	return out
+}
+
+func cloneQuestion(q Question) Question {
+	q.Options = slices.Clone(q.Options)
+	q.Categories = slices.Clone(q.Categories)
+	return q
+}

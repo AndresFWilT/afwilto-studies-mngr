@@ -467,8 +467,8 @@ func TestPlanImportInferredWeightsCountTheWholeBankNotJustTheFile(t *testing.T) 
 	plan := planOf(t, bank, extra, "")
 
 	// 5 / 3 / 5 classified (the question with no category is "sin clasificar" and does not count)
-	want := []WeightAfter{{"Cat A", 38, WeightInferred}, {"Cat B", 23, WeightInferred}, {"Cat C", 38, WeightInferred}}
-	// 100*5/13 = 38.46, 23.08, 38.46 -> floors 38,23,38 = 99; the largest remainder (.46 twice) goes to the lower index
+	want := []WeightAfter{{"Cat A", 39, WeightInferred}, {"Cat B", 23, WeightInferred}, {"Cat C", 38, WeightInferred}}
+	// 100*5/13 = 38.46, 23.08, 38.46 -> floors 38,23,38 = 99; the two equal remainders tie and the lower index takes the spare unit
 	if !slices.Equal(plan.Report.WeightsAfter, want) {
 		t.Errorf("weightsAfter = %+v, want %+v", plan.Report.WeightsAfter, want)
 	}
@@ -789,5 +789,31 @@ func TestBankAfterAppliesAWriteWithoutAliasingTheOriginal(t *testing.T) {
 	}
 	if len(after.Questions) != 4 || len(after.Classifications[0].Categories) != 4 {
 		t.Errorf("after: %d questions, %d primary categories", len(after.Questions), len(after.Classifications[0].Categories))
+	}
+}
+
+func TestPlanImportExplicitPrimaryIsRejectedWhenTheBankAlreadyHoldsTwoValues(t *testing.T) { // BR-C2 over the final bank
+	bank := apply(t, Bank{}, file(fq("old", C("Dominio", "X"), C("Servicio", "S", "T"))), "") // Dominio becomes primary
+	if !bank.Classifications[0].IsPrimary() {
+		t.Fatal("test setup: Dominio should be primary")
+	}
+	// An exam whose primary is unresolved but whose bank has a 2-valued Servicio question.
+	bank.Classifications[0].Position = PositionSecondary
+
+	plan := planOf(t, bank, file(fq("new", C("Servicio", "S"))), "Servicio")
+
+	if got := pathsOf(plan.Report.Errors); !slices.Equal(got, []string{"primary|primary_single_valued"}) {
+		t.Errorf("errors = %v, want primary|primary_single_valued naming the existing question", got)
+	}
+}
+
+func TestPlanImportAnExistingQuestionRewrittenByTheFileNoLongerBlocksAPrimary(t *testing.T) { // BR-C2 is judged on the final state
+	bank := apply(t, Bank{}, file(fq("old", C("Dominio", "X"), C("Servicio", "S", "T"))), "")
+	bank.Classifications[0].Position = PositionSecondary
+
+	plan := planOf(t, bank, file(fq("old", C("Dominio", "X"), C("Servicio", "S"))), "Servicio")
+
+	if len(plan.Report.Errors) != 0 || plan.Report.Primary == nil || *plan.Report.Primary != "Servicio" {
+		t.Errorf("errors %+v primary %v, want Servicio now that old is rewritten with one value", plan.Report.Errors, plan.Report.Primary)
 	}
 }

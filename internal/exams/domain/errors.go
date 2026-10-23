@@ -59,6 +59,7 @@ const (
 	RuleDuplicateKey           = "duplicate_key"
 	RulePattern                = "pattern"
 	RuleMediaMissing           = "media_missing"
+	RuleNotFound               = "not_found"
 
 	// Slice 04: bank and category editing.
 	RuleWeightsSum = "weights_sum"

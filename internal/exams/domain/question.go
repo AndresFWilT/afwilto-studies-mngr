@@ -1,6 +1,11 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+)
 
 // QuestionType is single (exactly one correct option) or multi (BR-Q1).
 type QuestionType string
@@ -94,8 +99,62 @@ const (
 	minMultiOptions        = 3
 )
 
+var keyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,99}$`)
+
 // ValidateQuestion applies BR-Q1, BR-Q2 and the BR-Q3 key pattern to one
 // question, so that a path that does not go through the JSON Schema is still
 // guarded. Violation fields are relative to the question: "key", "options",
-// "options[2]".
-func ValidateQuestion(q FileQuestion) []Violation { return nil }
+// "options[2]". correct_count is reported at most once per question.
+func ValidateQuestion(q FileQuestion) []Violation {
+	var out []Violation
+	if !keyPattern.MatchString(q.Key) {
+		out = append(out, Violation{Field: "key", Rule: RulePattern,
+			Message: "key must match ^[a-z0-9][a-z0-9._-]{0,99}$ (lowercase letters, digits, dot, underscore, dash)"})
+	}
+	if q.Type != QuestionSingle && q.Type != QuestionMulti {
+		out = append(out, Violation{Field: "type", Rule: RuleSchema, Message: "type must be single or multi"})
+	}
+	if n := len(q.Options); n < minOptions || n > maxOptions {
+		out = append(out, Violation{Field: "options", Rule: RuleSchema,
+			Message: fmt.Sprintf("a question has 2 to 6 options, this one has %d", n)})
+	} else if msg := correctCountProblem(q); msg != "" {
+		out = append(out, Violation{Field: "options", Rule: RuleCorrectCount, Message: msg})
+	}
+	for i, o := range q.Options {
+		switch {
+		case strings.TrimSpace(o.Text) == "" && o.Image == "":
+			out = append(out, Violation{Field: fmt.Sprintf("options[%d]", i), Rule: RuleOptionContent,
+				Message: "an option needs text or an image"})
+		case o.Image != "" && strings.TrimSpace(o.Alt) == "":
+			out = append(out, Violation{Field: fmt.Sprintf("options[%d]", i), Rule: RuleOptionContent,
+				Message: "an option with an image needs alt text"})
+		}
+	}
+	return out
+}
+
+// correctCountProblem is BR-Q1; "" when the question holds.
+func correctCountProblem(q FileQuestion) string {
+	correct := 0
+	for _, o := range q.Options {
+		if o.Correct {
+			correct++
+		}
+	}
+	switch q.Type {
+	case QuestionSingle:
+		if correct != 1 {
+			return fmt.Sprintf("a single-answer question has exactly 1 correct option, this one has %d", correct)
+		}
+	case QuestionMulti:
+		switch {
+		case len(q.Options) < minMultiOptions:
+			return fmt.Sprintf("a multi-answer question has 3 to 6 options, this one has %d", len(q.Options))
+		case correct < 2:
+			return fmt.Sprintf("a multi-answer question has at least 2 correct options, this one has %d", correct)
+		case correct == len(q.Options):
+			return "a multi-answer question needs at least 1 wrong option"
+		}
+	}
+	return ""
+}
