@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -93,20 +94,43 @@ func (r *ExamRepository) Update(ctx context.Context, e domain.Exam, expectedVers
 		"the exam was changed since you read it; reload and re-apply your edit")
 }
 
-func (r *ExamRepository) Delete(ctx context.Context, e domain.Exam) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE exams SET deleted_at = $2 WHERE id = $1 AND deleted_at IS NULL`, e.ID, e.DeletedAt)
+// Delete stamps the exam deleted unless it still has alive questions (BR-E3).
+// The exam row lock is the one imports take, so a delete and an import
+// serialize and the question count is read after any import committed.
+func (r *ExamRepository) Delete(ctx context.Context, e domain.Exam) (err error) {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	var id string
+	if err = tx.QueryRow(ctx, `SELECT id FROM exams WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, e.ID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = domain.ErrNotFound
+		}
+		return err
 	}
-	return nil
+	var questions int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM questions WHERE exam_id = $1 AND deleted_at IS NULL`, e.ID).Scan(&questions); err != nil {
+		return err
+	}
+	if questions > 0 {
+		err = domain.NewConflict("exam", domain.RuleInUse,
+			fmt.Sprintf("the exam still has %d questions; delete them first", questions))
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE exams SET deleted_at = $2 WHERE id = $1`, e.ID, e.DeletedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-// aliveExams selects the alive exams; the read model adds what later slices
-// join in (question totals, the last simulation).
+// aliveExams selects the alive exams.
 const aliveExams = `
 	SELECT id, subject_id, name, question_count, time_limit_min, pass_percent, version, created_at, updated_at
 	FROM exams WHERE deleted_at IS NULL`
@@ -132,14 +156,28 @@ func (r *ExamRepository) Get(ctx context.Context, id string) (domain.Exam, error
 	return e, err
 }
 
-// GetSummary has QuestionTotal 0 and no LastSimulation until slices 03 and 06b.
+// GetSummary adds the alive question total and the classifications with their
+// categories; LastSimulation arrives with slice 06b.
 func (r *ExamRepository) GetSummary(ctx context.Context, id string) (domain.ExamSummary, error) {
 	e, err := r.Get(ctx, id)
-	return domain.ExamSummary{Exam: e}, err
+	if err != nil {
+		return domain.ExamSummary{}, err
+	}
+	summary := domain.ExamSummary{Exam: e}
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM questions WHERE exam_id = $1 AND deleted_at IS NULL`, id).Scan(&summary.QuestionTotal); err != nil {
+		return domain.ExamSummary{}, err
+	}
+	if summary.Classifications, err = loadClassifications(ctx, r.pool, id); err != nil {
+		return domain.ExamSummary{}, err
+	}
+	return summary, nil
 }
 
 func (r *ExamRepository) ListBySubject(ctx context.Context, subjectID string) ([]domain.ExamSummary, error) {
-	rows, err := r.pool.Query(ctx, aliveExams+` AND subject_id = $1 ORDER BY lower(name) COLLATE "C", id`, subjectID)
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.id, e.subject_id, e.name, e.question_count, e.time_limit_min, e.pass_percent, e.version, e.created_at, e.updated_at,
+		       (SELECT count(*) FROM questions q WHERE q.exam_id = e.id AND q.deleted_at IS NULL)
+		FROM exams e WHERE e.deleted_at IS NULL AND e.subject_id = $1 ORDER BY lower(e.name) COLLATE "C", e.id`, subjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +185,16 @@ func (r *ExamRepository) ListBySubject(ctx context.Context, subjectID string) ([
 
 	summaries := []domain.ExamSummary{}
 	for rows.Next() {
-		e, err := scanExam(rows)
-		if err != nil {
+		var (
+			e     domain.Exam
+			name  string
+			total int
+		)
+		if err := rows.Scan(&e.ID, &e.SubjectID, &name, &e.QuestionCount, &e.TimeLimitMin, &e.PassPercent, &e.Version, &e.CreatedAt, &e.UpdatedAt, &total); err != nil {
 			return nil, err
 		}
-		summaries = append(summaries, domain.ExamSummary{Exam: e})
+		e.Name = domain.RehydrateExamName(name)
+		summaries = append(summaries, domain.ExamSummary{Exam: e, QuestionTotal: total})
 	}
 	return summaries, rows.Err()
 }

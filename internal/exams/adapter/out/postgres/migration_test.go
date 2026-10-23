@@ -191,6 +191,8 @@ func TestMigration0010AliveUniquenessIndexes(t *testing.T) { // slice 03 §4
 		"question key per exam":                 `INSERT INTO questions (id, exam_id, key, type, stem, source_kind, source_name, stem_fingerprint) VALUES ('` + uuid.NewString() + `', '` + exam.ID + `', 'q', 'single', 's', 'own', 'x', 'f')`,
 		"bad question key":                      `INSERT INTO questions (id, exam_id, key, type, stem, source_kind, source_name, stem_fingerprint) VALUES ('` + uuid.NewString() + `', '` + exam.ID + `', 'Bad Key', 'single', 's', 'own', 'x', 'f')`,
 		"bad question type":                     `INSERT INTO questions (id, exam_id, key, type, stem, source_kind, source_name, stem_fingerprint) VALUES ('` + uuid.NewString() + `', '` + exam.ID + `', 'q2', 'ordering', 's', 'own', 'x', 'f')`,
+		"pace without minutes":                  `INSERT INTO exam_categories (id, classification_id, key, name, fold_name, pace_questions) VALUES ('` + uuid.NewString() + `', '` + classID + `', 'p', 'P', 'p', 5)`,
+		"pace of zero":                          `INSERT INTO exam_categories (id, classification_id, key, name, fold_name, pace_questions, pace_minutes) VALUES ('` + uuid.NewString() + `', '` + classID + `', 'p', 'P', 'p', 0, 5)`,
 		"classification position 2":             `INSERT INTO exam_classifications (id, exam_id, name, fold_name, position) VALUES ('` + uuid.NewString() + `', '` + exam.ID + `', 'N', 'n', 2)`,
 	}
 	for name, stmt := range rejected {
