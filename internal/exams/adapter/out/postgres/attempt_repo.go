@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/afwilto/studies-mngr/internal/exams/app/port/out"
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
 )
 
@@ -126,6 +127,18 @@ func (r *AttemptRepository) FindInProgress(ctx context.Context, examID string) (
 		return "", false, err
 	}
 	return id, true, nil
+}
+
+func (r *AttemptRepository) Get(ctx context.Context, id string) (domain.Attempt, error) {
+	return domain.Attempt{}, errors.New("not implemented")
+}
+
+func (r *AttemptRepository) Mutate(ctx context.Context, id string, plan func(domain.Attempt) (*out.AttemptChange, error)) error {
+	return errors.New("not implemented")
+}
+
+func (r *AttemptRepository) ListByExam(ctx context.Context, examID string) ([]domain.AttemptSummary, error) {
+	return nil, errors.New("not implemented")
 }
 
 // loadAttempt reads an attempt with its items back, for the round-trip tests

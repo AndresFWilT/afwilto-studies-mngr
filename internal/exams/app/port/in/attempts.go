@@ -26,3 +26,37 @@ type StartAttemptCommand struct {
 type StartAttempt interface {
 	Execute(ctx context.Context, examID string, cmd StartAttemptCommand) (domain.AttemptView, error)
 }
+
+// GetAttempt reads an attempt after lazily finalizing an expired one (FR-10):
+// the start shape plus each item's answer state, the server's remaining time,
+// and the result once the attempt is closed. domain.ErrNotFound for an unknown
+// attempt.
+type GetAttempt interface {
+	Execute(ctx context.Context, attemptID string) (domain.AttemptView, error)
+}
+
+// AnswerItem saves the selection and flag of one item. Errors: ErrNotFound
+// (attempt or position), a validation error invalid_label / too_many_selected,
+// a conflict attempt_closed, attempt_expired (this call found the attempt past
+// its deadline and finalized it) or answer_locked.
+type AnswerItem interface {
+	Execute(ctx context.Context, attemptID string, position int, answer domain.AnswerInput) (domain.AnswerOutcome, error)
+}
+
+// SubmitAttempt scores and closes an attempt. A second submit, or one after
+// the attempt expired, is a conflict attempt_closed.
+type SubmitAttempt interface {
+	Execute(ctx context.Context, attemptID string) (domain.AttemptResult, error)
+}
+
+// ReviewAttempt returns every item of a closed attempt with its key. An open
+// attempt is a conflict attempt_in_progress.
+type ReviewAttempt interface {
+	Execute(ctx context.Context, attemptID string) ([]domain.ReviewItem, error)
+}
+
+// ListExamAttempts is the history of an exam; domain.ErrNotFound when the exam
+// is not alive.
+type ListExamAttempts interface {
+	Execute(ctx context.Context, examID string) (domain.AttemptHistory, error)
+}
