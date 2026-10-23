@@ -116,6 +116,9 @@ func (a Attempt) Answer(position int, in AnswerInput, now time.Time) (Attempt, A
 	return next, out, nil
 }
 
+// MaxLabelViolations is how many label violations one answer reports.
+const MaxLabelViolations = 10
+
 // labelViolations checks that every label is one the item shows and that none
 // repeats; a repeat is reported on its second occurrence.
 func labelViolations(s ItemSnapshot, selected []string) []Violation {

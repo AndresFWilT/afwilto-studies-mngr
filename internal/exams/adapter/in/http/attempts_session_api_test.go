@@ -340,6 +340,22 @@ func TestPutOfALabelTheItemDoesNotShowIsInvalidLabel(t *testing.T) { // S06b-3
 	}
 }
 
+func TestPutOfAMebibyteOfRepeatedLabelsAnswersWithAtMostTenViolations(t *testing.T) { // phase-3 fix 4
+	a := newAttemptsAPI(t)
+	id := a.mustStart(t, originSetConfig, "")["id"].(string) // item 2 is the multi one
+	body := `{"selected":["A"` + strings.Repeat(`,"A"`, (1<<20-100)/4) + `],"flagged":false}`
+
+	rec := a.put(t, id, 2, body)
+
+	code, details := errorOf(t, rec)
+	if rec.Code != http.StatusUnprocessableEntity || code != "validation_failed" || len(details) != 10 {
+		t.Errorf("status %d, %s, %d details; want 422 with exactly 10", rec.Code, code, len(details))
+	}
+	if rec.Body.Len() > 4096 {
+		t.Errorf("the response is %d bytes; a rejected body must not be echoed back at that size", rec.Body.Len())
+	}
+}
+
 func TestPutOfARepeatedLabelIsInvalidLabel(t *testing.T) {
 	a := newAttemptsAPI(t)
 	id := a.mustStart(t, originSetConfig, "")["id"].(string) // item 2 is the multi one

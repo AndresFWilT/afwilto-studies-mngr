@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -143,6 +144,38 @@ func TestAnswerReportsEveryBadLabelAndNothingElseWhenLabelsAreBad(t *testing.T) 
 	var v *ValidationError
 	if !errors.As(err, &v) || !slices.Equal(keysOf(v.Violations), []string{"selected[0]:invalid_label", "selected[2]:invalid_label"}) {
 		t.Errorf("err = %v, want invalid_label on selected[0] and selected[2] only", err)
+	}
+}
+
+func TestLabelViolationsStopAfterTenAndKeepTheFirstTenInOrder(t *testing.T) { // phase-3 fix 4
+	a := openAttempt(randomCfg, 72, multiItem())
+	selected := make([]string, 5000)
+	for i := range selected {
+		selected[i] = "A" // the first A is fine; every other one is a repeat
+	}
+
+	_, _, err := a.Answer(0, AnswerInput{Selected: selected}, answerNow())
+
+	var v *ValidationError
+	if !errors.As(err, &v) {
+		t.Fatalf("err = %v, want a validation error", err)
+	}
+	if len(v.Violations) != MaxLabelViolations {
+		t.Fatalf("%d violations, want exactly %d", len(v.Violations), MaxLabelViolations)
+	}
+	for i, violation := range v.Violations {
+		if want := fmt.Sprintf("selected[%d]", i+1); violation.Field != want || violation.Rule != RuleInvalidLabel {
+			t.Errorf("violation %d = %+v, want %s:invalid_label (the first ten, in order)", i, violation, want)
+		}
+	}
+}
+
+func TestExactlyTenBadLabelsAreAllReported(t *testing.T) { // phase-3 fix 4 boundary
+	a := openAttempt(randomCfg, 72, multiItem())
+	_, _, err := a.Answer(0, AnswerInput{Selected: slices.Repeat([]string{"Z"}, 10)}, answerNow())
+	var v *ValidationError
+	if !errors.As(err, &v) || len(v.Violations) != 10 {
+		t.Errorf("err = %v, want 10 violations", err)
 	}
 }
 
