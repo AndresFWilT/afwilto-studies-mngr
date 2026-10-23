@@ -16,9 +16,24 @@ import (
 // predicates combined with AND; the order is origin set, origin number, then
 // key, with questions lacking a set or number last. Sets compare ignoring case
 // (then exactly), numbers as numbers, keys in byte order.
-func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID string, f domain.QuestionFilter) ([]domain.QuestionSummary, error) {
+//
+// The exam check, the rows and their category links are one snapshot (phase-2
+// fix 5).
+func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID string, f domain.QuestionFilter) (summaries []domain.QuestionSummary, err error) {
+	err = readSnapshot(ctx, r.pool, func(q queryer) error {
+		var listErr error
+		summaries, listErr = listQuestions(ctx, q, examID, f)
+		return listErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return summaries, nil
+}
+
+func listQuestions(ctx context.Context, db queryer, examID string, f domain.QuestionFilter) ([]domain.QuestionSummary, error) {
 	var alive bool
-	if err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM exams WHERE id = $1 AND deleted_at IS NULL)`, examID).Scan(&alive); err != nil {
+	if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM exams WHERE id = $1 AND deleted_at IS NULL)`, examID).Scan(&alive); err != nil {
 		return nil, err
 	}
 	if !alive {
@@ -50,7 +65,7 @@ func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID strin
 			WHERE qc.question_id = q.id AND qc.deleted_at IS NULL AND c.deleted_at IS NULL AND k.deleted_at IS NULL AND k.position = 0)`)
 	}
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT q.id, q.key, q.type, q.stem, q.difficulty, q.origin, q.version, q.updated_at
 		FROM questions q WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY lower(q.origin->>'set') COLLATE "C" NULLS LAST, (q.origin->>'set') COLLATE "C" NULLS LAST,
@@ -85,7 +100,7 @@ func (r *QuestionBankRepository) ListQuestions(ctx context.Context, examID strin
 		return nil, err
 	}
 
-	refs, err := loadCategoryRefs(ctx, r.pool, ids)
+	refs, err := loadCategoryRefs(ctx, db, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +140,22 @@ func loadCategoryRefs(ctx context.Context, q queryer, questionIDs []string) (map
 
 // GetQuestion reads one alive question of an alive exam with its options in
 // stored order.
-func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (domain.Question, error) {
+//
+// The question, its options and its category links are one snapshot (phase-2
+// fix 5).
+func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (question domain.Question, err error) {
+	err = readSnapshot(ctx, r.pool, func(q queryer) error {
+		var getErr error
+		question, getErr = getQuestion(ctx, q, id)
+		return getErr
+	})
+	if err != nil {
+		return domain.Question{}, err
+	}
+	return question, nil
+}
+
+func getQuestion(ctx context.Context, db queryer, id string) (domain.Question, error) {
 	var (
 		q           domain.Question
 		typ         string
@@ -133,7 +163,7 @@ func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (do
 		difficulty  *string
 		origin      []byte
 	)
-	err := r.pool.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT q.exam_id, q.key, q.type, q.stem, q.explanation, q.difficulty, q.source_kind, q.source_name, q.origin,
 		       q.stem_fingerprint, q.version, q.created_at, q.updated_at
 		FROM questions q JOIN exams e ON e.id = q.exam_id AND e.deleted_at IS NULL
@@ -151,7 +181,7 @@ func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (do
 		return domain.Question{}, fmt.Errorf("question %s origin: %w", q.Key, err)
 	}
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT text, image, alt, correct, rationale FROM question_options
 		WHERE question_id = $1 AND deleted_at IS NULL ORDER BY position`, id)
 	if err != nil {
@@ -171,7 +201,7 @@ func (r *QuestionBankRepository) GetQuestion(ctx context.Context, id string) (do
 		return domain.Question{}, err
 	}
 
-	refs, err := loadCategoryRefs(ctx, r.pool, []string{id})
+	refs, err := loadCategoryRefs(ctx, db, []string{id})
 	if err != nil {
 		return domain.Question{}, err
 	}

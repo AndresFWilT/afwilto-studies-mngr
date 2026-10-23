@@ -49,10 +49,18 @@ func (r *QuestionBankRepository) ApplyEdit(ctx context.Context, examID string, p
 	return tx.Commit(ctx)
 }
 
-// editWriteError maps the unique name indexes (migrations 0009 and 0010).
+// editWriteError maps the unique name indexes (migrations 0009 and 0010) and
+// text the database refuses (SQLSTATE 22021, 22P05).
 func editWriteError(err error) error {
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != uniqueViolation {
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	if pgErr.Code == invalidByteSequence || pgErr.Code == untranslatableCharacter { // phase-2 fix 5: backstop, the domain answers `format` first
+		return domain.NewValidation(domain.Violation{Field: "name", Rule: domain.RuleInvalidText,
+			Message: "a name contains a character the database cannot store (U+0000)"})
+	}
+	if pgErr.Code != uniqueViolation {
 		return err
 	}
 	switch pgErr.ConstraintName {
