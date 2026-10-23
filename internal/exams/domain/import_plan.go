@@ -525,19 +525,6 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 	}
 	if primary != nil {
 		primary.WeightMode = primaryMode(reg, primary.ID)
-		counts := make([]int, len(primary.Categories))
-		for _, q := range after.Questions {
-			for _, ref := range q.Categories {
-				if Fold(ref.Classification) != primary.Fold && Fold(ref.Classification) != Fold(primary.Name) {
-					continue
-				}
-				for ci, c := range primary.Categories {
-					if Fold(c.Name) == Fold(ref.Category) {
-						counts[ci]++
-					}
-				}
-			}
-		}
 		if primary.WeightMode == WeightManual {
 			for _, c := range primary.Categories {
 				report.WeightsAfter = append(report.WeightsAfter, WeightAfter{Category: c.Name, Percent: c.WeightPercent, Mode: WeightManual})
@@ -548,10 +535,9 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 				}
 			}
 		} else {
-			quotas := LargestRemainder(100, counts)
-			for ci, c := range primary.Categories {
-				report.WeightsAfter = append(report.WeightsAfter, WeightAfter{Category: c.Name, Percent: quotas[ci], Mode: WeightInferred})
-				w.Weights = append(w.Weights, CategoryWeight{CategoryID: c.ID, Percent: quotas[ci]})
+			for ci, cw := range InferWeights(primary.Categories, after.LinkCounts()) {
+				report.WeightsAfter = append(report.WeightsAfter, WeightAfter{Category: primary.Categories[ci].Name, Percent: cw.Percent, Mode: WeightInferred})
+				w.Weights = append(w.Weights, cw)
 			}
 		}
 	} else if len(reg) > 0 {
