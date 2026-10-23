@@ -410,3 +410,20 @@ func TestStartsRacingFinalizingReadsAndWritesOfAnExpiredAttemptAlwaysSucceedOver
 		e.call(t, http.MethodPost, "/api/v1/attempts/"+fresh.ID+"/submit", "")
 	}
 }
+
+func TestASubmitFourSecondsPastTheDeadlineLastsExactlyTheTimeLimitOverRealPostgres(t *testing.T) { // phase-3 fix 3
+	e := newSessionE2E(t)
+	id := e.start(t, `{"selection":{"kind":"random","count":3},"timing":{"kind":"timed","minutes":10},"feedback":"end"}`)["id"].(string)
+	e.clock.T = e.t0.Add(10*time.Minute + 4*time.Second)
+
+	status, out := e.call(t, http.MethodPost, "/api/v1/attempts/"+id+"/submit", "")
+
+	result, _ := out["data"].(map[string]any)
+	if status != http.StatusOK || result["durationSeconds"] != float64(600) {
+		t.Fatalf("submit: %d %v, want durationSeconds 600", status, out)
+	}
+	var submittedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT submitted_at FROM attempts WHERE id = $1`, id).Scan(&submittedAt); err != nil || !submittedAt.Equal(e.t0.Add(10*time.Minute)) {
+		t.Errorf("submitted_at = %v (err %v), want the deadline", submittedAt, err)
+	}
+}

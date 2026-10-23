@@ -129,15 +129,39 @@ func TestSubmitAfterTheExpiryIsAttemptClosedAndTheAttemptIsAlreadyScored(t *test
 	}
 }
 
-func TestSubmitInsideTheGraceIsAccepted(t *testing.T) { // BR-A2: the grace covers writes
+func TestSubmitInsideTheGraceIsAcceptedAndNeverLastsLongerThanTheTimeLimit(t *testing.T) { // BR-A2 grace; phase-3 fix 3
+	for name, late := range map[string]time.Duration{"3 s": 3 * time.Second, "4 s": 4 * time.Second, "exactly the grace limit": 5 * time.Second} {
+		e := newSessionEnv(t)
+		view := e.begin(t, timedRandom(2, 10, domain.FeedbackEnd), nil)
+		e.at(10*time.Minute + late)
+
+		r, err := e.submit.Execute(ctx, view.ID)
+
+		stored := e.attempts.Rows[view.ID]
+		if err != nil || stored.Status != domain.AttemptSubmitted || r.DurationSeconds != 600 {
+			t.Errorf("%s late: result %+v, err %v, status %q; want a submit lasting the time limit, 600 s", name, r, err, stored.Status)
+		}
+		if stored.SubmittedAt == nil || !stored.SubmittedAt.Equal(t0.Add(10*time.Minute)) {
+			t.Errorf("%s late: submittedAt = %v, want the deadline", name, stored.SubmittedAt)
+		}
+	}
+}
+
+func TestSubmitBeforeTheDeadlineKeepsItsOwnTimeAndAnUntimedOneNeverClamps(t *testing.T) { // phase-3 fix 3: min(now, deadlineAt)
 	e := newSessionEnv(t)
-	view := e.begin(t, timedRandom(2, 10, domain.FeedbackEnd), nil)
-	e.at(10*time.Minute + 3*time.Second)
+	timed := e.begin(t, timedRandom(2, 10, domain.FeedbackEnd), nil)
+	e.at(9*time.Minute + 59*time.Second)
+	r, err := e.submit.Execute(ctx, timed.ID)
+	if err != nil || r.DurationSeconds != 599 {
+		t.Errorf("timed, 1 s early: %+v, err %v; want 599 s", r, err)
+	}
 
-	r, err := e.submit.Execute(ctx, view.ID)
-
-	if err != nil || e.attempts.Rows[view.ID].Status != domain.AttemptSubmitted || r.DurationSeconds != 603 {
-		t.Errorf("result %+v, err %v, status %q; want a submit at 603 s", r, err, e.attempts.Rows[view.ID].Status)
+	e2 := newSessionEnv(t)
+	untimed := e2.begin(t, randomUntimed(2), nil)
+	e2.at(26 * time.Hour)
+	r, err = e2.submit.Execute(ctx, untimed.ID)
+	if err != nil || r.DurationSeconds != 26*3600 {
+		t.Errorf("untimed: %+v, err %v; want 93600 s", r, err)
 	}
 }
 
