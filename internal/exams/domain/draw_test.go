@@ -327,6 +327,25 @@ func TestOriginSetKeepsOriginNumberThenKeyOrder(t *testing.T) { // AC-21
 	}
 }
 
+func TestOriginSetPutsQuestionsWithoutANumberLastThenByKey(t *testing.T) { // phase-3 fix 6, as in the bank browser
+	bank := Bank{Questions: []Question{
+		withOrigin(sessQ("b-unnumbered"), "Timed Set 3", 0),
+		withOrigin(sessQ("z-numbered-2"), "Timed Set 3", 2),
+		withOrigin(sessQ("a-unnumbered"), "Timed Set 3", 0),
+		withOrigin(sessQ("y-numbered-1"), "Timed Set 3", 1),
+		withOrigin(sessQ("x-numbered-1"), "Timed Set 3", 1),
+	}}
+	for _, seed := range []uint64{1, 2, 3} {
+		draw, err := DrawSession(sessExam(), bank, practice(Selection{Kind: SelectOriginSet, Set: "Timed Set 3"}), seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := drawnKeys(draw), "x-numbered-1,y-numbered-1,z-numbered-2,a-unnumbered,b-unnumbered"; got != want {
+			t.Errorf("seed %d: order %s, want %s", seed, got, want)
+		}
+	}
+}
+
 func TestOriginSetStillShufflesItsOptions(t *testing.T) { // FR-9 "Options are always shuffled"
 	bank := Bank{Questions: []Question{}}
 	for i := 1; i <= 20; i++ {
