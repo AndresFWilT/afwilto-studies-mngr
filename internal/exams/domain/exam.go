@@ -148,11 +148,13 @@ type SimulationResult struct {
 	At           time.Time
 }
 
-// ExamSummary is the read model: the exam plus what other contexts' tables
-// contribute. QuestionTotal is 0 until slice 03, LastSimulation nil until
-// slice 06b. Classifications join the detail view in slice 03.
+// ExamSummary is the read model: the exam plus what its questions contribute.
+// QuestionTotal counts the alive questions, LastSimulation is nil until slice
+// 06b. Classifications (with their categories) fill the detail view; list
+// items leave them nil.
 type ExamSummary struct {
 	Exam
-	QuestionTotal  int
-	LastSimulation *SimulationResult
+	QuestionTotal   int
+	LastSimulation  *SimulationResult
+	Classifications []Classification
 }

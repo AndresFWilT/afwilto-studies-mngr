@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/afwilto/studies-mngr/internal/exams/domain"
@@ -52,10 +53,12 @@ func (d *FakeSubjectDirectory) IsAlive(_ context.Context, subjectID string) (boo
 	return d.Alive[subjectID], d.Err
 }
 
-// FakeExamRepo implements out.ExamRepository in memory.
+// FakeExamRepo implements out.ExamRepository in memory. Questions, when set
+// (NewFakeQuestionBank does it), feeds the read model and the BR-E3 guard.
 type FakeExamRepo struct {
-	Rows     map[string]domain.Exam
-	Subjects *FakeSubjectDirectory
+	Rows      map[string]domain.Exam
+	Subjects  *FakeSubjectDirectory
+	Questions *FakeQuestionBank
 }
 
 func NewFakeExamRepo(subjects *FakeSubjectDirectory) *FakeExamRepo {
@@ -106,6 +109,9 @@ func (r *FakeExamRepo) Delete(_ context.Context, e domain.Exam) error {
 	if !ok || current.DeletedAt != nil {
 		return domain.ErrNotFound
 	}
+	if r.Questions != nil && len(r.Questions.Bank(e.ID).Questions) > 0 {
+		return domain.NewConflict("exam", domain.RuleInUse, "the exam still has questions")
+	}
 	current.DeletedAt = e.DeletedAt
 	r.Rows[e.ID] = current
 	return nil
@@ -121,14 +127,38 @@ func (r *FakeExamRepo) Get(_ context.Context, id string) (domain.Exam, error) {
 
 func (r *FakeExamRepo) GetSummary(ctx context.Context, id string) (domain.ExamSummary, error) {
 	e, err := r.Get(ctx, id)
-	return domain.ExamSummary{Exam: e}, err
+	if err != nil {
+		return domain.ExamSummary{}, err
+	}
+	summary := domain.ExamSummary{Exam: e}
+	if r.Questions != nil {
+		bank := r.Questions.Bank(id)
+		summary.QuestionTotal = len(bank.Questions)
+		for _, c := range bank.Classifications {
+			for i := range c.Categories {
+				for _, q := range bank.Questions {
+					for _, ref := range q.Categories {
+						if domain.Fold(ref.Classification) == domain.Fold(c.Name) && domain.Fold(ref.Category) == domain.Fold(c.Categories[i].Name) {
+							c.Categories[i].QuestionCount++
+						}
+					}
+				}
+			}
+			summary.Classifications = append(summary.Classifications, c)
+		}
+	}
+	return summary, nil
 }
 
 func (r *FakeExamRepo) ListBySubject(_ context.Context, subjectID string) ([]domain.ExamSummary, error) {
 	list := []domain.ExamSummary{}
 	for _, e := range r.Rows {
 		if e.SubjectID == subjectID && e.DeletedAt == nil {
-			list = append(list, domain.ExamSummary{Exam: e})
+			summary := domain.ExamSummary{Exam: e}
+			if r.Questions != nil {
+				summary.QuestionTotal = len(r.Questions.Bank(e.ID).Questions)
+			}
+			list = append(list, summary)
 		}
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -138,4 +168,59 @@ func (r *FakeExamRepo) ListBySubject(_ context.Context, subjectID string) ([]dom
 		return list[i].ID < list[j].ID
 	})
 	return list, nil
+}
+
+// FakeQuestionBank implements out.QuestionBank over per-exam in-memory banks.
+// ApplyImport holds a lock, so it is as serial as the SQL adapter's exam lock.
+type FakeQuestionBank struct {
+	mu    sync.Mutex
+	exams *FakeExamRepo
+	banks map[string]domain.Bank
+	// Applied counts the writes that were persisted.
+	Applied int
+}
+
+// NewFakeQuestionBank wires the bank to the exam repository, which then reads
+// question totals and classifications from it.
+func NewFakeQuestionBank(exams *FakeExamRepo) *FakeQuestionBank {
+	b := &FakeQuestionBank{exams: exams, banks: map[string]domain.Bank{}}
+	exams.Questions = b
+	return b
+}
+
+// Bank returns a copy of the stored bank of an exam.
+func (b *FakeQuestionBank) Bank(examID string) domain.Bank {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.banks[examID].After(domain.ImportWrite{})
+}
+
+// Set replaces the stored bank, for tests that need a prepared state.
+func (b *FakeQuestionBank) Set(examID string, bank domain.Bank) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.banks[examID] = bank
+}
+
+func (b *FakeQuestionBank) LoadBank(ctx context.Context, examID string) (domain.Bank, error) {
+	if _, err := b.exams.Get(ctx, examID); err != nil {
+		return domain.Bank{}, err
+	}
+	return b.Bank(examID), nil
+}
+
+func (b *FakeQuestionBank) ApplyImport(ctx context.Context, examID string, plan func(domain.Bank) (*domain.ImportWrite, error)) error {
+	if _, err := b.exams.Get(ctx, examID); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current := b.banks[examID]
+	write, err := plan(current.After(domain.ImportWrite{}))
+	if err != nil || write == nil {
+		return err
+	}
+	b.banks[examID] = current.After(*write)
+	b.Applied++
+	return nil
 }

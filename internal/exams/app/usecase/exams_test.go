@@ -325,3 +325,7 @@ func TestDeleteExamTwiceOrUnknownIsNotFound(t *testing.T) {
 		}
 	}
 }
+
+const unknownID = "00000000-0000-7000-8000-999999999999"
+
+func isNotFound(err error) bool { return errors.Is(err, domain.ErrNotFound) }
