@@ -139,3 +139,20 @@ func (e *Exam) Delete(now time.Time) {
 	e.DeletedAt = &now
 	e.UpdatedAt = now
 }
+
+// SimulationResult is the outcome of the latest closed simulation attempt;
+// slice 06b fills it in.
+type SimulationResult struct {
+	ScorePercent float64
+	Passed       bool
+	At           time.Time
+}
+
+// ExamSummary is the read model: the exam plus what other contexts' tables
+// contribute. QuestionTotal is 0 until slice 03, LastSimulation nil until
+// slice 06b. Classifications join the detail view in slice 03.
+type ExamSummary struct {
+	Exam
+	QuestionTotal  int
+	LastSimulation *SimulationResult
+}
