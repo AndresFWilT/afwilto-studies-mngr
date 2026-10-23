@@ -21,6 +21,9 @@ func translateError(w http.ResponseWriter, err error) {
 		details := make([]httpx.ErrorDetail, len(validation.Violations))
 		for i, v := range validation.Violations {
 			details[i] = httpx.ErrorDetail{Field: v.Field, Rule: v.Rule, Message: v.Message}
+			if v.Shortage != nil {
+				details[i].Category, details[i].Needed, details[i].Available = v.Shortage.Category, &v.Shortage.Needed, &v.Shortage.Available
+			}
 		}
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.ErrorBody{
 			Code:    "validation_failed",

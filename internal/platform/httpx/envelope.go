@@ -18,6 +18,12 @@ type ErrorDetail struct {
 	Field   string `json:"field"`
 	Rule    string `json:"rule"`
 	Message string `json:"message"`
+
+	// Spec 18 insufficient_questions only: the category that is short and its
+	// numbers. Available can be 0, so the numbers are pointers.
+	Category  string `json:"category,omitempty"`
+	Needed    *int   `json:"needed,omitempty"`
+	Available *int   `json:"available,omitempty"`
 }
 
 func WriteData(w http.ResponseWriter, status int, data any) {

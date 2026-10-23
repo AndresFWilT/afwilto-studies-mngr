@@ -309,7 +309,7 @@ func TestStartAnUntimedAttemptAnswers201WithTheStartShape(t *testing.T) {
 func TestStartATimedAttemptCarriesDeadlineAndRemainingSeconds(t *testing.T) { // FR-9 deadline from the server clock
 	a := newAttemptsAPI(t)
 
-	data := a.mustStart(t, servicioConfig("all", `{"kind":"timed","minutes":30}`), "")
+	data := a.mustStart(t, servicioConfig(`"all"`, `{"kind":"timed","minutes":30}`), "")
 
 	if data["deadlineAt"] != "2026-10-23T09:30:00Z" || data["remainingSeconds"] != float64(1800) {
 		t.Errorf("deadlineAt %v remainingSeconds %v, want 09:30:00Z and 1800", data["deadlineAt"], data["remainingSeconds"])
