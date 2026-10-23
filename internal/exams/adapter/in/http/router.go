@@ -18,6 +18,10 @@ type Deps struct {
 	GetExam          in.GetExam
 	UpdateExam       in.UpdateExam
 	DeleteExam       in.DeleteExam
+
+	// Slice 03: the question import. Both are needed for the route to exist.
+	ImportQuestions in.ImportQuestions
+	FileReader      *QuestionFileReader
 }
 
 // Register adds the exams routes to the shared mux. Slice 02 registers the
