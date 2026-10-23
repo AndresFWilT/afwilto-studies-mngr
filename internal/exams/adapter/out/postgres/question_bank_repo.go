@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -292,7 +294,12 @@ func writeImport(ctx context.Context, tx pgx.Tx, bank domain.Bank, w domain.Impo
 	batch := &pgx.Batch{}
 	// The image rows go first and commit with the import; a hash that is
 	// already stored is left as it is (the bytes are the same by definition).
-	for _, f := range w.Media {
+	// They go in sha256 order: two imports that share new images and list them
+	// in opposite order would otherwise each wait on the other's uncommitted
+	// row of the unique index (phase-2 fix 4, SQLSTATE 40P01).
+	media := slices.Clone(w.Media)
+	slices.SortFunc(media, func(a, b domain.MediaFile) int { return strings.Compare(a.Media.SHA256, b.Media.SHA256) })
+	for _, f := range media {
 		batch.Queue(`INSERT INTO media (sha256, content_type, bytes, width, height, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sha256) DO NOTHING`,
 			f.Media.SHA256, f.Media.ContentType, f.Media.Bytes, f.Media.Width, f.Media.Height, w.Now)
