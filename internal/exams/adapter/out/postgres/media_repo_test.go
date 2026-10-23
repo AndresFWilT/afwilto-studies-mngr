@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"testing"
@@ -190,4 +192,71 @@ func TestFindReturnsOnlyTheStoredHashesAndAnEmptyAnswerIsNotAnError(t *testing.T
 	if err != nil || len(noInput) != 0 {
 		t.Errorf("Find(nil) = %v, %v", noInput, err)
 	}
+}
+
+// Phase-2 fix 4: two imports into different exams that share new images and
+// reference them in opposite order used to deadlock on the unique index of
+// media. The rows are inserted in sha256 order whatever the reference order.
+
+func randomImages(n int) []domain.MediaFile {
+	out := make([]domain.MediaFile, n)
+	for i := range out {
+		sum := sha256.Sum256([]byte(uuid.NewString()))
+		out[i] = png(hex.EncodeToString(sum[:]))
+	}
+	return out
+}
+
+func TestConcurrentImportsSharingNewImagesInOppositeOrderNeverDeadlock(t *testing.T) { // fix 4
+	for _, tc := range []struct {
+		name       string
+		images     int
+		iterations int
+	}{
+		{"two shared images", 2, 40},
+		{"thirty shared images", 30, 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := newMediaEnv(t)
+			other := b.repoEnv.add(t, b.subjectID, "Other exam")
+			for i := 0; i < tc.iterations; i++ {
+				forward := randomImages(tc.images)
+				backward := slices.Clone(forward)
+				slices.Reverse(backward)
+
+				start := make(chan struct{})
+				errs := make(chan error, 2)
+				for examID, media := range map[string][]domain.MediaFile{b.exam.ID: forward, other.ID: backward} {
+					go func() {
+						<-start
+						errs <- b.bank.ApplyImport(ctx, examID, func(domain.Bank) (*domain.ImportWrite, error) {
+							return &domain.ImportWrite{ExamID: examID, Now: time.Now().UTC(), Media: media}, nil
+						})
+					}()
+				}
+				close(start)
+				for range 2 {
+					if err := <-errs; err != nil {
+						t.Fatalf("iteration %d: an import failed: %v", i, err)
+					}
+				}
+				if n := mediaRowsAmong(t, forward); n != tc.images {
+					t.Fatalf("iteration %d: %d of %d shared images stored, want all once", i, n, tc.images)
+				}
+			}
+		})
+	}
+}
+
+func mediaRowsAmong(t *testing.T, files []domain.MediaFile) int {
+	t.Helper()
+	shas := make([]string, len(files))
+	for i, f := range files {
+		shas[i] = f.Media.SHA256
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM media WHERE sha256 = ANY($1)`, shas).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
