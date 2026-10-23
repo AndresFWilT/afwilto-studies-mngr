@@ -134,17 +134,44 @@ func badEntryName(f *zip.File) string {
 	return ""
 }
 
+// endRecord holds the fields of the end-of-central-directory record that the
+// guards read.
+type endRecord struct {
+	pos    int    // where the record starts
+	count  uint16 // entries, 16 bits (0xFFFF is the zip64 marker)
+	size   uint32 // bytes of the central directory
+	offset uint32 // where the central directory starts
+}
+
+const (
+	endRecordLen       = 22
+	endRecordSignature = 0x06054b50
+)
+
+// findEndRecord locates the last end-of-central-directory record, the way
+// archive/zip does (the first signature from the end, within the 64 KiB a
+// comment can occupy); ok is false when there is none (archive/zip then
+// reports the damage).
+func findEndRecord(data []byte) (rec endRecord, ok bool) {
+	for i := len(data) - endRecordLen; i >= 0 && i >= len(data)-endRecordLen-0xFFFF; i-- {
+		if binary.LittleEndian.Uint32(data[i:]) == endRecordSignature {
+			return endRecord{
+				pos:    i,
+				count:  binary.LittleEndian.Uint16(data[i+10:]),
+				size:   binary.LittleEndian.Uint32(data[i+12:]),
+				offset: binary.LittleEndian.Uint32(data[i+16:]),
+			}, true
+		}
+	}
+	return endRecord{}, false
+}
+
 // endRecordCount reads the total entry count of the end-of-central-directory
 // record without parsing the directory; ok is false when no record is found
 // (archive/zip then reports the damage).
 func endRecordCount(data []byte) (count int, ok bool) {
-	const recordLen, signature = 22, 0x06054b50
-	for i := len(data) - recordLen; i >= 0 && i >= len(data)-recordLen-0xFFFF; i-- {
-		if binary.LittleEndian.Uint32(data[i:]) == signature {
-			return int(binary.LittleEndian.Uint16(data[i+10:])), true
-		}
-	}
-	return 0, false
+	rec, ok := findEndRecord(data)
+	return int(rec.count), ok
 }
 
 // RootJSON returns the questions file; a file over the .json limit is zip_size.
@@ -197,11 +224,78 @@ func (z *importZip) read(f *zip.File, max int64) ([]byte, error) {
 // fraction of it.
 const maxCentralDirectoryBytes = 1 << 20
 
+const (
+	centralHeaderLen       = 46
+	centralHeaderSignature = 0x02014b50
+	zip64LocatorLen        = 20
+	zip64LocatorSignature  = 0x07064b50
+	zip64RecordSignature   = 0x06064b50
+)
+
 // guardCentralDirectory decides the entry count without archive/zip: the
 // end record's count field is only 16 bits, and archive/zip accepts a
-// directory whose real count differs from it by a multiple of 65,536, parsing
+// directory whose real count differs from it by a multiple of 65,536 (and
+// takes the 64-bit zip64 values instead when a marker says so), parsing
 // every entry. It rejects (zip_entries) a central directory over 1 MiB, then
-// walks the directory headers and rejects more than maxEntries.
+// walks the directory headers and rejects more than maxEntries. Input it
+// cannot find a directory in is left to archive/zip.
 func guardCentralDirectory(data []byte, maxEntries int) error {
+	rec, ok := findEndRecord(data)
+	if !ok {
+		return nil
+	}
+	size, offset, end := uint64(rec.size), uint64(rec.offset), uint64(rec.pos)
+	// archive/zip's own triggers for reading the zip64 record (including its
+	// comparison of the size with 0xFFFF)
+	if rec.count == 0xFFFF || rec.size == 0xFFFF || rec.size == 0xFFFFFFFF || rec.offset == 0xFFFFFFFF {
+		if z, found := readZip64Directory(data, rec.pos); found {
+			size, offset, end = z.size, z.offset, z.pos
+		}
+	}
+	if size > maxCentralDirectoryBytes {
+		return zipViolation(domain.RuleZipEntries, "the zip's central directory is %d bytes; at most %d are read", size, maxCentralDirectoryBytes)
+	}
+
+	// archive/zip starts at the stated offset, or where the directory must
+	// begin if the archive has bytes in front of it.
+	start := -1
+	for _, candidate := range []uint64{offset, end - min(end, size)} {
+		if candidate <= uint64(len(data)) && uint64(len(data))-candidate >= centralHeaderLen && binary.LittleEndian.Uint32(data[candidate:]) == centralHeaderSignature {
+			start = int(candidate)
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	// archive/zip reads headers until one is not a header, whatever the end
+	// record says the directory's size is, so the walk does too; it stops as
+	// soon as the limit is passed.
+	entries := 0
+	for pos := start; pos+centralHeaderLen <= len(data) && binary.LittleEndian.Uint32(data[pos:]) == centralHeaderSignature; {
+		entries++
+		if entries > maxEntries {
+			return zipViolation(domain.RuleZipEntries, "the zip's central directory lists more than %d entries", maxEntries)
+		}
+		pos += centralHeaderLen + int(binary.LittleEndian.Uint16(data[pos+28:])) + int(binary.LittleEndian.Uint16(data[pos+30:])) + int(binary.LittleEndian.Uint16(data[pos+32:]))
+	}
 	return nil
+}
+
+type zip64Directory struct {
+	pos, size, offset uint64
+}
+
+// readZip64Directory follows the zip64 locator that sits just before the end
+// record to the zip64 end record, as archive/zip does.
+func readZip64Directory(data []byte, endPos int) (z zip64Directory, ok bool) {
+	loc := endPos - zip64LocatorLen
+	if loc < 0 || binary.LittleEndian.Uint32(data[loc:]) != zip64LocatorSignature {
+		return zip64Directory{}, false
+	}
+	pos := binary.LittleEndian.Uint64(data[loc+8:])
+	if pos > uint64(len(data)) || uint64(len(data))-pos < 56 || binary.LittleEndian.Uint32(data[pos:]) != zip64RecordSignature {
+		return zip64Directory{}, false
+	}
+	return zip64Directory{pos: pos, size: binary.LittleEndian.Uint64(data[pos+40:]), offset: binary.LittleEndian.Uint64(data[pos+48:])}, true
 }
