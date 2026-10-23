@@ -82,10 +82,20 @@ type Attempt struct {
 	Items            []AttemptItem
 }
 
-// AttemptView is an attempt plus the server-computed remaining time.
+// AttemptView is an attempt plus the server-computed remaining time and, once
+// the attempt is closed, its result.
 type AttemptView struct {
 	Attempt
 	RemainingSeconds *int
+	Result           *AttemptResult
+}
+
+// ReviewItem is one item of a closed attempt with everything a review shows.
+// NoteID is empty when origin.noteRef matches no alive note of the subject.
+type ReviewItem struct {
+	Item   AttemptItem
+	Reveal Reveal
+	NoteID string
 }
 
 // OptionLabel is the letter of the option shown at an index: A, B, C…

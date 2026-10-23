@@ -48,12 +48,15 @@ func (it AttemptItem) Reveal() Reveal {
 }
 
 // AnswerOutcome is the result of saving an answer. Reveal is set only when the
-// item is revealed (feedback each, non-empty selection).
+// item is revealed (feedback each, non-empty selection). RemainingSeconds is
+// the server clock for timed attempts, so the runner can resync (the use case
+// fills it in).
 type AnswerOutcome struct {
-	Position int
-	Selected []string
-	Flagged  bool
-	Reveal   *Reveal
+	Position         int
+	Selected         []string
+	Flagged          bool
+	Reveal           *Reveal
+	RemainingSeconds *int
 }
 
 // Answer saves the selection and flag of one item of an open attempt and
