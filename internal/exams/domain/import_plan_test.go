@@ -369,16 +369,18 @@ func TestPlanImportWithNoEligibleClassificationLeavesTheExamWithoutPrimaryAndWar
 	}
 }
 
-func TestPlanImportPromotesAnExistingSecondaryWhenTheParameterNamesIt(t *testing.T) { // FR-3.1 rule 2 after an unresolved first import
-	bank := apply(t, Bank{}, file(fq("a", C("Dominio", "X"), C("Servicio", "S", "T")), fq("b", C("Servicio", "S"))), "") // Dominio not used by b
+func TestPlanImportPromotesAnExistingSecondaryOnceNoQuestionHasTwoValuesInIt(t *testing.T) { // FR-3.1 rule 3 after an unresolved first import
+	// Two values in both classifications: nothing qualifies, so no primary yet.
+	bank := apply(t, Bank{}, file(fq("a", C("Dominio", "X", "Y"), C("Servicio", "S", "T"))), "")
 	if bank.Classifications[0].IsPrimary() || bank.Classifications[1].IsPrimary() {
 		t.Fatal("test setup: expected no primary")
 	}
 
-	plan := planOf(t, bank, file(fq("c", C("Dominio", "X")), fq("d", C("Dominio", "Y"))), "")
+	// The file rewrites a with one Dominio value and adds c: nobody has two values in Dominio now.
+	plan := planOf(t, bank, file(fq("a", C("Dominio", "X"), C("Servicio", "S", "T")), fq("c", C("Dominio", "Y"))), "")
 
 	if plan.Report.Primary == nil || *plan.Report.Primary != "Dominio" {
-		t.Fatalf("primary %v errors %+v, want Dominio now that every question of the file uses it once", plan.Report.Primary, plan.Report.Errors)
+		t.Fatalf("primary %v errors %+v, want Dominio now that no question has more than one value in it", plan.Report.Primary, plan.Report.Errors)
 	}
 	if mustWrite(t, plan).PromoteToPrimary != bank.Classifications[0].ID {
 		t.Errorf("promote = %q, want the existing Dominio %q", mustWrite(t, plan).PromoteToPrimary, bank.Classifications[0].ID)
@@ -386,6 +388,41 @@ func TestPlanImportPromotesAnExistingSecondaryWhenTheParameterNamesIt(t *testing
 	after := bank.After(*mustWrite(t, plan))
 	if !after.Classifications[0].IsPrimary() || after.Classifications[1].IsPrimary() {
 		t.Errorf("positions after: %+v", after.Classifications)
+	}
+}
+
+func TestPlanImportAQuestionWithNoValueInAClassificationDoesNotDisqualifyIt(t *testing.T) { // M3, FR-3.3: unclassified questions are fine
+	f := file(fq("a", C("Dominio", "X"), C("Servicio", "S", "T")), fq("b", C("Servicio", "S")))
+
+	plan := planOf(t, Bank{}, f, "")
+
+	if len(plan.Report.Errors) != 0 || plan.Report.Primary == nil || *plan.Report.Primary != "Dominio" {
+		t.Errorf("errors %+v primary %v, want Dominio: b has no Dominio value, which only makes it unclassified", plan.Report.Errors, plan.Report.Primary)
+	}
+}
+
+func TestPlanImportTheReviewersExampleTakesTheFirstQualifyingClassificationOfTheFile(t *testing.T) { // M3: q1 {Servicio:[S]}, q2 {Dominio:[A]}
+	f := file(fq("q1", C("Servicio", "S")), fq("q2", C("Dominio", "A")))
+
+	plan := planOf(t, Bank{}, f, "")
+
+	r := plan.Report
+	if len(r.Errors) != 0 || r.Primary == nil || *r.Primary != "Servicio" {
+		t.Fatalf("errors %+v primary %v, want Servicio: both qualify and the tie goes to the first in order of first appearance", r.Errors, r.Primary)
+	}
+	if len(r.WeightsAfter) != 1 || r.WeightsAfter[0].Category != "S" || r.WeightsAfter[0].Percent != 100 {
+		t.Errorf("weights = %+v, want S at 100: q2 is unclassified in the primary", r.WeightsAfter)
+	}
+	if len(r.Warnings) != 0 {
+		t.Errorf("warnings = %v, want none: a primary was found", r.Warnings)
+	}
+}
+
+func TestPlanImportAFileThatClassifiesNothingHasNoPrimaryAndNoWarning(t *testing.T) { // M3 boundary: no classification, nothing to choose
+	plan := planOf(t, Bank{}, file(fq("a"), fq("b")), "")
+
+	if len(plan.Report.Errors) != 0 || plan.Report.Primary != nil || len(plan.Report.Warnings) != 0 {
+		t.Errorf("errors %+v primary %v warnings %v, want a clean import with no primary", plan.Report.Errors, plan.Report.Primary, plan.Report.Warnings)
 	}
 }
 
