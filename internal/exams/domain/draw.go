@@ -123,7 +123,15 @@ func buildPool(exam Exam, bank Bank, cfg SessionConfig) (sessionPool, error) {
 				pool.questions = append(pool.questions, q)
 			}
 		}
+		// By origin.number, then key; a question with no number (0) comes after
+		// the numbered ones, as in the bank browser.
 		slices.SortFunc(pool.questions, func(a, b Question) int {
+			if (a.Origin.Number > 0) != (b.Origin.Number > 0) {
+				if a.Origin.Number > 0 {
+					return -1
+				}
+				return 1
+			}
 			if a.Origin.Number != b.Origin.Number {
 				return a.Origin.Number - b.Origin.Number
 			}
