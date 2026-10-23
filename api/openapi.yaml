@@ -23,7 +23,12 @@ info:
     implementation: a documented path whose slice has not landed still answers
     404 not_found. Request bodies are capped at MAX_BODY_BYTES (1 MiB) except
     the question import, which has MAX_IMPORT_BYTES (51 MiB).
-  version: 0.2.0
+
+
+    v0.3.0 (slice 06b, additive): GET /attempts/{id} returns `result` once
+    the attempt is closed, and the answer response carries `remainingSeconds`
+    on timed attempts.
+  version: 0.3.0
 servers:
   - url: http://localhost:8084
     description: Local Docker platform
@@ -706,7 +711,10 @@ paths:
       - $ref: '#/components/parameters/Id'
     get:
       operationId: getAttempt
-      summary: Attempt state with remainingSeconds computed by the server (finalizes an expired attempt first)
+      summary: >
+        Attempt state with remainingSeconds computed by the server (finalizes
+        an expired attempt first). Once the attempt is closed the data also
+        holds `result`, the same AttemptResult the submit returns.
       responses:
         '200':
           description: Attempt
@@ -727,7 +735,11 @@ paths:
       summary: >
         Answer and flag one item. With feedback end the response never carries
         correctness; with feedback each it adds the reveal fields and locks the
-        answer (D-13).
+        answer (D-13): a later call may change `flagged` only, a different
+        `selected` answers 409 answer_locked. Timed attempts also get
+        remainingSeconds, so the runner can resync its countdown. 409
+        attempt_expired when this call found the attempt past deadlineAt + 5 s
+        (it is finalized as expired), attempt_closed when it was already closed.
       requestBody:
         required: true
         content:
@@ -1573,6 +1585,9 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/AttemptItem' }
+        result:
+          $ref: '#/components/schemas/AttemptResult'
+          description: GET only, once the attempt is submitted or expired; the same value the submit returns
     StartAttemptRequest:
       type: object
       required: [config]
@@ -1615,6 +1630,7 @@ components:
               type: array
               items: { $ref: '#/components/schemas/OptionLabel' }
             flagged: { type: boolean }
+            remainingSeconds: { type: integer, minimum: 0, description: 'Present on timed attempts, computed by the server' }
             correct: { type: boolean }
             correctLabels:
               type: array
@@ -1774,7 +1790,8 @@ components:
             (slice 04); zip_entries, zip_size, zip_path, zip_layout,
             media_type, media_size, media_dimensions (slice 05);
             insufficient_questions, locked_by_simulation (slice 06a);
-            too_many_selected, invalid_label (slice 06b).
+            too_many_selected, invalid_label (slice 06b; a repeated label is
+            invalid_label).
         message: { type: string }
         category:
           type: string
