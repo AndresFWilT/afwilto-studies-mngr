@@ -27,15 +27,37 @@ type queryer interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func (r *QuestionBankRepository) LoadBank(ctx context.Context, examID string) (domain.Bank, error) {
-	var alive bool
-	if err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM exams WHERE id = $1 AND deleted_at IS NULL)`, examID).Scan(&alive); err != nil {
+// readSnapshot runs fn in one REPEATABLE READ, READ ONLY transaction, so every
+// statement of a multi-query read sees the same committed state (M1).
+func readSnapshot(ctx context.Context, pool *pgxpool.Pool, fn func(q queryer) error) error {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *QuestionBankRepository) LoadBank(ctx context.Context, examID string) (bank domain.Bank, err error) {
+	err = readSnapshot(ctx, r.pool, func(q queryer) error {
+		var alive bool
+		if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM exams WHERE id = $1 AND deleted_at IS NULL)`, examID).Scan(&alive); err != nil {
+			return err
+		}
+		if !alive {
+			return domain.ErrNotFound
+		}
+		var loadErr error
+		bank, loadErr = loadBank(ctx, q, examID)
+		return loadErr
+	})
+	if err != nil {
 		return domain.Bank{}, err
 	}
-	if !alive {
-		return domain.Bank{}, domain.ErrNotFound
-	}
-	return loadBank(ctx, r.pool, examID)
+	return bank, nil
 }
 
 // loadClassifications reads the alive classifications of an exam with their
@@ -82,7 +104,10 @@ func loadClassifications(ctx context.Context, q queryer, examID string) ([]domai
 		if err := rows.Scan(&c.ID, &c.ClassificationID, &c.Key, &c.Name, &c.Fold, &c.WeightPercent, &c.PaceQuestions, &c.PaceMinutes, &c.QuestionCount); err != nil {
 			return nil, err
 		}
-		i := index[c.ClassificationID]
+		i, ok := index[c.ClassificationID]
+		if !ok { // not loaded by the first query: skip, never attach to element 0
+			continue
+		}
 		classes[i].Categories = append(classes[i].Categories, c)
 	}
 	return classes, rows.Err()
@@ -169,7 +194,10 @@ func loadBank(ctx context.Context, q queryer, examID string) (domain.Bank, error
 			return domain.Bank{}, err
 		}
 		opt := domain.Option{Correct: correct, Text: deref(text), Image: deref(image), Alt: deref(alt), Rationale: deref(rationale)}
-		i := index[id]
+		i, ok := index[id]
+		if !ok { // a question the first query did not load: skip, never attach to element 0
+			continue
+		}
 		bank.Questions[i].Options = append(bank.Questions[i].Options, opt)
 	}
 	rows.Close()
@@ -195,7 +223,10 @@ func loadBank(ctx context.Context, q queryer, examID string) (domain.Bank, error
 		if err := rows.Scan(&id, &ref.Classification, &ref.Category); err != nil {
 			return domain.Bank{}, err
 		}
-		i := index[id]
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
 		bank.Questions[i].Categories = append(bank.Questions[i].Categories, ref)
 	}
 	return bank, rows.Err()

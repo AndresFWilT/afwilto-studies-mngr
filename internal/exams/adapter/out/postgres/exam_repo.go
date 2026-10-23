@@ -154,7 +154,11 @@ func scanExam(row pgx.Row) (domain.Exam, error) {
 }
 
 func (r *ExamRepository) Get(ctx context.Context, id string) (domain.Exam, error) {
-	e, err := scanExam(r.pool.QueryRow(ctx, aliveExams+` AND id = $1`, id))
+	return getExam(ctx, r.pool, id)
+}
+
+func getExam(ctx context.Context, q queryer, id string) (domain.Exam, error) {
+	e, err := scanExam(q.QueryRow(ctx, aliveExams+` AND id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Exam{}, domain.ErrNotFound
 	}
@@ -163,16 +167,20 @@ func (r *ExamRepository) Get(ctx context.Context, id string) (domain.Exam, error
 
 // GetSummary adds the alive question total and the classifications with their
 // categories; LastSimulation arrives with slice 06b.
-func (r *ExamRepository) GetSummary(ctx context.Context, id string) (domain.ExamSummary, error) {
-	e, err := r.Get(ctx, id)
+func (r *ExamRepository) GetSummary(ctx context.Context, id string) (summary domain.ExamSummary, err error) {
+	err = readSnapshot(ctx, r.pool, func(q queryer) error {
+		e, err := getExam(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		summary = domain.ExamSummary{Exam: e}
+		if err := q.QueryRow(ctx, `SELECT count(*) FROM questions WHERE exam_id = $1 AND deleted_at IS NULL`, id).Scan(&summary.QuestionTotal); err != nil {
+			return err
+		}
+		summary.Classifications, err = loadClassifications(ctx, q, id)
+		return err
+	})
 	if err != nil {
-		return domain.ExamSummary{}, err
-	}
-	summary := domain.ExamSummary{Exam: e}
-	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM questions WHERE exam_id = $1 AND deleted_at IS NULL`, id).Scan(&summary.QuestionTotal); err != nil {
-		return domain.ExamSummary{}, err
-	}
-	if summary.Classifications, err = loadClassifications(ctx, r.pool, id); err != nil {
 		return domain.ExamSummary{}, err
 	}
 	return summary, nil
