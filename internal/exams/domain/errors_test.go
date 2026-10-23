@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -99,5 +100,15 @@ func TestRuleConstantsAreTheWireStringsOfSpec18(t *testing.T) {
 	}
 	if len(cases) != 32 || len(seen) != 32 {
 		t.Errorf("table has %d entries and %d distinct strings, want 32 and 32", len(cases), len(seen))
+	}
+}
+
+func TestAttemptInProgressConflictCarriesTheExistingIdInFieldAndMessage(t *testing.T) { // BR-A1, slice 06a §1.4
+	const id = "0192f3a4-0000-7000-8000-000000000001"
+
+	c := NewAttemptInProgress(id)
+
+	if c.Field != "attemptId" || c.Rule != RuleAttemptInProgress || !strings.Contains(c.Message, id) {
+		t.Errorf("conflict = %+v, want field attemptId, rule attempt_in_progress and the id in the message", c)
 	}
 }

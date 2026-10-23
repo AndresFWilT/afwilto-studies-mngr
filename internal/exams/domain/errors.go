@@ -110,3 +110,10 @@ func (e *ConflictError) Error() string { return "conflict: " + e.Rule + ": " + e
 func NewConflict(field, rule, message string) *ConflictError {
 	return &ConflictError{Field: field, Rule: rule, Message: message}
 }
+
+// NewAttemptInProgress is BR-A1's conflict: the exam already has an open
+// attempt. The id travels in details[0].field = attemptId and in the message,
+// which is where the UI reads it for "Continuar simulacro".
+func NewAttemptInProgress(attemptID string) *ConflictError {
+	return &ConflictError{}
+}
