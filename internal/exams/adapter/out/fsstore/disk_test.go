@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var ctx = context.Background()
@@ -222,5 +223,90 @@ func TestPingFailsOnAReadOnlyDirectory(t *testing.T) { // S05-5
 func TestPingFailsWhenTheDirectoryIsMissing(t *testing.T) { // the volume is not mounted
 	if err := NewDiskFileStorage(filepath.Join(t.TempDir(), "absent")).Ping(ctx); err == nil {
 		t.Error("Ping succeeded on a missing directory")
+	}
+}
+
+// Phase-2 fix 7: a crash between CreateTemp and Rename leaves `.upload-*`
+// behind; building the store removes the ones older than an hour.
+
+func touch(t *testing.T, path string, age time.Duration) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-age)
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+func TestConstructingTheStoreRemovesUploadTempFilesOlderThanAnHour(t *testing.T) { // fix 7
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "ab", "cd", ".upload-111")
+	staleAtRoot := filepath.Join(dir, ".upload-222")
+	justOver := filepath.Join(dir, "ef", "01", ".upload-333")
+	touch(t, stale, 48*time.Hour)
+	touch(t, staleAtRoot, 3*time.Hour)
+	touch(t, justOver, 61*time.Minute)
+
+	NewDiskFileStorage(dir)
+
+	for _, p := range []string{stale, staleAtRoot, justOver} {
+		if exists(p) {
+			t.Errorf("%s survived the cleanup", p)
+		}
+	}
+}
+
+func TestConstructingTheStoreKeepsYoungUploadsAndEveryOtherFile(t *testing.T) { // fix 7: no over-deletion
+	dir := t.TempDir()
+	sha := sumOf("png bytes")
+	keep := map[string]string{
+		"an upload in flight (10 minutes)":   filepath.Join(dir, "ab", "cd", ".upload-young"),
+		"an upload just under the hour":      filepath.Join(dir, "ab", "cd", ".upload-edge"),
+		"a stored image, however old":        filepath.Join(dir, sha[0:2], sha[2:4], sha),
+		"a readiness probe, however old":     filepath.Join(dir, ".ready-old"),
+		"a file that merely mentions upload": filepath.Join(dir, "ab", "cd", "upload-old"),
+	}
+	touch(t, keep["an upload in flight (10 minutes)"], 10*time.Minute)
+	touch(t, keep["an upload just under the hour"], 59*time.Minute)
+	touch(t, keep["a stored image, however old"], 400*time.Hour)
+	touch(t, keep["a readiness probe, however old"], 400*time.Hour)
+	touch(t, keep["a file that merely mentions upload"], 400*time.Hour)
+
+	NewDiskFileStorage(dir)
+
+	for what, p := range keep {
+		if !exists(p) {
+			t.Errorf("%s was removed", what)
+		}
+	}
+}
+
+func TestConstructingTheStoreOverAMissingDirectoryDoesNotFail(t *testing.T) { // fix 7: cleanup is best effort
+	store := NewDiskFileStorage(filepath.Join(t.TempDir(), "not", "there", "yet"))
+
+	if err := store.Put(ctx, sumOf("a"), strings.NewReader("a")); err != nil {
+		t.Errorf("Put after constructing over a missing directory: %v", err)
+	}
+}
+
+func TestConstructingTheStoreDoesNotFollowASymlinkedDirectoryOutOfTheMediaDir(t *testing.T) { // fix 7: the walk stays inside
+	outside, dir := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, ".upload-victim")
+	touch(t, victim, 48*time.Hour)
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+
+	NewDiskFileStorage(dir)
+
+	if !exists(victim) {
+		t.Error("the cleanup followed a symlink and deleted a file outside the media directory")
 	}
 }
