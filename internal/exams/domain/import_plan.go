@@ -585,7 +585,7 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 			for i, s := range nc.SimilarTo {
 				quoted[i] = fmt.Sprintf("%q", s)
 			}
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%q se parece a %s", nc.Name, strings.Join(quoted, ", ")))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%q is similar to %s", nc.Name, strings.Join(quoted, ", ")))
 		}
 	}
 	after := in.Bank.After(*w)
@@ -603,7 +603,7 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 			}
 			for _, nc := range w.Categories {
 				if nc.ClassificationID == primary.ID {
-					report.Warnings = append(report.Warnings, fmt.Sprintf("%q no entra al simulacro real hasta que le asignes peso", nc.Name))
+					report.Warnings = append(report.Warnings, fmt.Sprintf("%q is not part of the full simulation until you assign it a weight", nc.Name))
 				}
 			}
 		} else {
@@ -614,7 +614,7 @@ func buildPlan(in PlanInput, uses [][]classUse, reg []*regClass, primaryName str
 		}
 	} else if len(reg) > 0 {
 		report.Warnings = append(report.Warnings,
-			"no se pudo elegir una clasificación principal: en todas hay preguntas con más de un valor; elige una con el parámetro primary")
+			"could not choose a primary classification: every one has questions with more than one value; choose one with the primary parameter")
 	}
 
 	return ImportPlan{Report: report, Write: w}

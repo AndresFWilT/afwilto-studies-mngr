@@ -113,7 +113,7 @@ func NewConflict(field, rule, message string) *ConflictError {
 
 // NewAttemptInProgress is BR-A1's conflict: the exam already has an open
 // attempt. The id travels in details[0].field = attemptId and in the message,
-// which is where the UI reads it for "Continuar simulacro".
+// which is where the UI reads it for "Continue practice exam".
 func NewAttemptInProgress(attemptID string) *ConflictError {
 	return NewConflict("attemptId", RuleAttemptInProgress, "attempt "+attemptID+" is in progress")
 }

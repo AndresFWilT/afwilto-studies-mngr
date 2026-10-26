@@ -78,7 +78,7 @@ func buildPool(exam Exam, bank Bank, cfg SessionConfig) (sessionPool, error) {
 		pool.questions = sortedByID(bank.Questions)
 		pool.target = min(sel.Count, len(pool.questions))
 		if pool.target == 0 {
-			emptyShortage("banco")
+			emptyShortage("bank")
 		}
 
 	case SelectCategories:
@@ -146,7 +146,7 @@ func buildPool(exam Exam, bank Bank, cfg SessionConfig) (sessionPool, error) {
 }
 
 // withoutWeightLabel names the shortage of a simulation with nothing to draw from.
-const withoutWeightLabel = "categorías con peso"
+const withoutWeightLabel = "weighted categories"
 
 // buildSimulationPool apportions the exam's question count over the weighted
 // categories of the primary classification (FR-9, AC-14) and lists the
