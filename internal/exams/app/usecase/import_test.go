@@ -224,7 +224,7 @@ func TestSimilarCategoryNameIsAWarningNotAnError(t *testing.T) { // AC-3
 	if len(r.Errors) != 0 || len(r.NewCategories) != 1 || !slices.Equal(r.NewCategories[0].SimilarTo, []string{"Alto rendimiento"}) {
 		t.Errorf("errors %+v new categories %+v", r.Errors, r.NewCategories)
 	}
-	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "se parece a") {
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "is similar to") {
 		t.Errorf("warnings = %v", r.Warnings)
 	}
 }
@@ -274,7 +274,7 @@ func TestManualWeightsSurviveAnImportAndTheNewCategoryGetsZero(t *testing.T) { /
 	if !slices.Equal(got, []int{30, 26, 24, 20, 0}) || summary.Classifications[0].WeightMode != domain.WeightManual {
 		t.Errorf("weights = %v mode %s, want 30/26/24/20/0 manual", got, summary.Classifications[0].WeightMode)
 	}
-	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "no entra al simulacro real hasta que le asignes peso") {
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "is not part of the full simulation until you assign it a weight") {
 		t.Errorf("warnings = %v", r.Warnings)
 	}
 }

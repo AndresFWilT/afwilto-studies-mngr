@@ -157,7 +157,7 @@ func TestPreviewListsTheSameShortagesTheStartFailsOn(t *testing.T) { // slice 06
 func TestPreviewOfAnEmptyPoolReportsTheShortageAndZeroMinutes(t *testing.T) {
 	p, err := PreviewSession(sessExam(), Bank{}, practice(Selection{Kind: SelectRandom, Count: 5}))
 	if err != nil || p.PoolSize != 0 || p.DrawCount != 0 || p.SuggestedMinutes != 0 || len(p.Shortages) != 1 {
-		t.Errorf("preview = %+v, err %v; want an empty pool, 0 min and the 'banco' shortage", p, err)
+		t.Errorf("preview = %+v, err %v; want an empty pool, 0 min and the 'bank' shortage", p, err)
 	}
 }
 

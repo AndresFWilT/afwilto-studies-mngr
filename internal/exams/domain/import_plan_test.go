@@ -359,7 +359,7 @@ func TestPlanImportWithNoEligibleClassificationLeavesTheExamWithoutPrimaryAndWar
 	if len(r.WeightsAfter) != 0 || len(mustWrite(t, plan).Weights) != 0 {
 		t.Errorf("no primary, no weights: %+v / %+v", r.WeightsAfter, mustWrite(t, plan).Weights)
 	}
-	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "clasificación principal") {
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "primary classification") {
 		t.Errorf("warnings = %v, want one about the missing primary classification", r.Warnings)
 	}
 	for _, c := range mustWrite(t, plan).Classifications {
@@ -437,7 +437,7 @@ func TestPlanImportFlagsNewCategoriesThatResembleExistingOnes(t *testing.T) { //
 		!slices.Equal(r.NewCategories[0].SimilarTo, []string{"Alto rendimiento"}) {
 		t.Fatalf("new categories = %+v", r.NewCategories)
 	}
-	if len(r.Warnings) != 1 || r.Warnings[0] != `"Alto rendimeinto" se parece a "Alto rendimiento"` {
+	if len(r.Warnings) != 1 || r.Warnings[0] != `"Alto rendimeinto" is similar to "Alto rendimiento"` {
 		t.Errorf("warnings = %q", r.Warnings)
 	}
 	if len(plan.Report.Errors) != 0 {
@@ -532,7 +532,7 @@ func TestPlanImportManualWeightsStayAndANewCategoryGetsZeroWithAWarning(t *testi
 	if !slices.Equal(plan.Report.WeightsAfter, want) {
 		t.Errorf("weightsAfter = %+v, want %+v", plan.Report.WeightsAfter, want)
 	}
-	if len(plan.Report.Warnings) != 1 || plan.Report.Warnings[0] != `"Migración" no entra al simulacro real hasta que le asignes peso` {
+	if len(plan.Report.Warnings) != 1 || plan.Report.Warnings[0] != `"Migración" is not part of the full simulation until you assign it a weight` {
 		t.Errorf("warnings = %q", plan.Report.Warnings)
 	}
 	if len(mustWrite(t, plan).Weights) != 0 {

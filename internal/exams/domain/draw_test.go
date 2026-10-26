@@ -173,7 +173,7 @@ func TestSimulationWithoutAnyWeightedCategoryIsInsufficient(t *testing.T) { // s
 
 	_, err := DrawSession(sessExam(), bank, simulation(), 1)
 
-	want := []Shortage{{Category: "categorías con peso", Needed: 65, Available: 0}}
+	want := []Shortage{{Category: "weighted categories", Needed: 65, Available: 0}}
 	if got := shortagesOf(err); !slices.Equal(got, want) {
 		t.Errorf("shortages = %v, want %v", got, want)
 	}
@@ -236,7 +236,7 @@ func TestACountAboveThePoolDrawsTheWholePool(t *testing.T) { // slice 06a §5
 
 func TestRandomFromAnEmptyBankIsInsufficient(t *testing.T) {
 	_, err := DrawSession(sessExam(), Bank{}, practice(Selection{Kind: SelectRandom, Count: 5}), 1)
-	want := []Shortage{{Category: "banco", Needed: 1, Available: 0}}
+	want := []Shortage{{Category: "bank", Needed: 1, Available: 0}}
 	if got := shortagesOf(err); !slices.Equal(got, want) {
 		t.Errorf("shortages = %v, want %v", got, want)
 	}
